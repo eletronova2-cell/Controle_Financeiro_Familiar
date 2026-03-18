@@ -53,7 +53,11 @@ const CAT_CORES = {
 };
 
 const ESTADO_INICIAL = {
-  config: { ciclo1: 15, ciclo2: 30, nomeFamilia: "Minha Família" },
+  config: {
+    nomeFamilia: "Minha Família",
+    ciclo1ini: 1,  ciclo1fim: 5,
+    ciclo2ini: 15, ciclo2fim: 20,
+  },
   receitasFixas: [],
   despesasFixas: [],
   receitasAvulsas: [],
@@ -517,18 +521,22 @@ export default function App() {
     const { ano, mes } = mesVis;
     const { config, receitasFixas, receitasAvulsas, pagamentos } = state;
     const { dfAtivas, dvDoMes } = dadosMes;
-    const c1 = config.ciclo1;
 
-    const recAvCiclo = (minDia, maxDia) => receitasAvulsas.filter((r) => {
+    // Garante compatibilidade com dados salvos no formato antigo (ciclo1/ciclo2 numérico)
+    const c1ini = config.ciclo1ini ?? 1;
+    const c1fim = config.ciclo1fim ?? (config.ciclo1 ?? 5);
+    const c2ini = config.ciclo2ini ?? 15;
+    const c2fim = config.ciclo2fim ?? (config.ciclo2 ?? 20);
+
+    const recAvNaFaixa = (ini, fim) => receitasAvulsas.filter((r) => {
       const d = new Date(r.data + "T00:00:00");
       const dia = d.getDate();
-      return d.getFullYear() === ano && d.getMonth() + 1 === mes && dia > minDia && dia <= maxDia;
+      return d.getFullYear() === ano && d.getMonth() + 1 === mes && dia >= ini && dia <= fim;
     }).reduce((s, r) => s + r.valor, 0);
 
-    const rec1 = receitasFixas.filter((r) => itemAtivoNoMes(r, ano, mes) && r.dia <= c1)
-      .reduce((s, r) => s + r.valor, 0) + recAvCiclo(0, c1);
-    const rec2 = receitasFixas.filter((r) => itemAtivoNoMes(r, ano, mes) && r.dia > c1)
-      .reduce((s, r) => s + r.valor, 0) + recAvCiclo(c1, 32);
+    const recFixNaFaixa = (ini, fim) => receitasFixas
+      .filter((r) => itemAtivoNoMes(r, ano, mes) && r.dia >= ini && r.dia <= fim)
+      .reduce((s, r) => s + r.valor, 0);
 
     const mapD = (d) => {
       const key = `${d.id}-${ano}-${mes}`;
@@ -536,18 +544,20 @@ export default function App() {
       return { ...d, pago: pg?.pago || false, valorReal: pg?.valor ?? d.valor };
     };
 
+    const naFaixa = (dia, ini, fim) => dia >= ini && dia <= fim;
+
     return [
       {
-        label: `Ciclo 1 — até dia ${c1}`,
-        receita: rec1,
-        despesas: dfAtivas.filter((d) => d.diaVencimento <= c1).map(mapD),
-        despesasVar: dvDoMes.filter((d) => new Date(d.data + "T00:00:00").getDate() <= c1),
+        label: `Ciclo 1 — dia ${c1ini} a ${c1fim}`,
+        receita: recFixNaFaixa(c1ini, c1fim) + recAvNaFaixa(c1ini, c1fim),
+        despesas: dfAtivas.filter((d) => naFaixa(d.diaVencimento, c1ini, c1fim)).map(mapD),
+        despesasVar: dvDoMes.filter((d) => naFaixa(new Date(d.data + "T00:00:00").getDate(), c1ini, c1fim)),
       },
       {
-        label: `Ciclo 2 — após dia ${c1}`,
-        receita: rec2,
-        despesas: dfAtivas.filter((d) => d.diaVencimento > c1).map(mapD),
-        despesasVar: dvDoMes.filter((d) => new Date(d.data + "T00:00:00").getDate() > c1),
+        label: `Ciclo 2 — dia ${c2ini} a ${c2fim}`,
+        receita: recFixNaFaixa(c2ini, c2fim) + recAvNaFaixa(c2ini, c2fim),
+        despesas: dfAtivas.filter((d) => naFaixa(d.diaVencimento, c2ini, c2fim)).map(mapD),
+        despesasVar: dvDoMes.filter((d) => naFaixa(new Date(d.data + "T00:00:00").getDate(), c2ini, c2fim)),
       },
     ];
   }, [state, mesVis, dadosMes]);
@@ -709,6 +719,12 @@ function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, m
       {cicloData.map((ciclo, i) => (
         <CicloCard key={i} ciclo={ciclo} ehMesFuturo={ehMesFuturo} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} />
       ))}
+
+      <div style={{ textAlign: "center", marginTop: 24, paddingBottom: 4 }}>
+        <span style={{ fontSize: 10, color: "var(--text3)", fontFamily: "var(--mono)", letterSpacing: "0.3px" }}>
+          v1.0.1 · 1703026
+        </span>
+      </div>
     </>
   );
 }
@@ -1009,14 +1025,26 @@ function AbaConfig({ state, update, setModal, excluir, editar }) {
         </div>
         <div className="field-row">
           <div className="field">
-            <label>Ciclo 1 — até o dia</label>
-            <input type="number" min="1" max="28" value={state.config.ciclo1}
-              onChange={(e) => update((s) => { s.config.ciclo1 = parseInt(e.target.value) || 15; })} />
+            <label>Ciclo 1 — dia início</label>
+            <input type="number" min="1" max="28" value={state.config.ciclo1ini ?? 1}
+              onChange={(e) => update((s) => { s.config.ciclo1ini = parseInt(e.target.value) || 1; })} />
           </div>
           <div className="field">
-            <label>Ciclo 2 — até o dia</label>
-            <input type="number" min="1" max="31" value={state.config.ciclo2}
-              onChange={(e) => update((s) => { s.config.ciclo2 = parseInt(e.target.value) || 30; })} />
+            <label>Ciclo 1 — dia fim</label>
+            <input type="number" min="1" max="28" value={state.config.ciclo1fim ?? 5}
+              onChange={(e) => update((s) => { s.config.ciclo1fim = parseInt(e.target.value) || 5; })} />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Ciclo 2 — dia início</label>
+            <input type="number" min="1" max="31" value={state.config.ciclo2ini ?? 15}
+              onChange={(e) => update((s) => { s.config.ciclo2ini = parseInt(e.target.value) || 15; })} />
+          </div>
+          <div className="field">
+            <label>Ciclo 2 — dia fim</label>
+            <input type="number" min="1" max="31" value={state.config.ciclo2fim ?? 20}
+              onChange={(e) => update((s) => { s.config.ciclo2fim = parseInt(e.target.value) || 20; })} />
           </div>
         </div>
       </div>
