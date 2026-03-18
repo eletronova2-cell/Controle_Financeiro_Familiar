@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 const fmtBRL = (v) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
 
+// Valor mascarado quando ocultar=true
+const fmtV = (v, ocultar) => ocultar ? "R$ ••••" : fmtBRL(v);
+
 const todayStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -503,6 +506,7 @@ export default function App() {
   const [aba, setAba] = useState("inicio");
   const [modal, setModal] = useState(null);
   const [mesVis, setMesVis] = useState(() => mesAtualReal());
+  const [ocultar, setOcultar] = useState(false);
 
   useEffect(() => { saveState(state); }, [state]);
 
@@ -604,6 +608,17 @@ export default function App() {
     update((s) => { s[colecao] = s[colecao].map((i) => i.id === id ? { ...i, ...dados } : i); });
   };
 
+  const mover = (colecao, id, direcao) => {
+    update((s) => {
+      const arr = [...s[colecao]];
+      const idx = arr.findIndex((i) => i.id === id);
+      const novoIdx = idx + direcao;
+      if (novoIdx < 0 || novoIdx >= arr.length) return;
+      [arr[idx], arr[novoIdx]] = [arr[novoIdx], arr[idx]];
+      s[colecao] = arr;
+    });
+  };
+
   const exportarCSV = () => {
     const { ano, mes } = mesVis;
     const rows = [["Data","Nome","Categoria","Tipo","Valor","Status"]];
@@ -646,20 +661,29 @@ export default function App() {
               {ehMesPassado && " · encerrado"}
             </div>
           </div>
-          <div className="month-nav">
-            <button onClick={() => setMesVis((m) => mesAnterior(m.ano, m.mes))}>‹</button>
-            {!ehMesAtual && (
-              <button className="mes-atual-btn" onClick={() => setMesVis(mesAtualReal())}>Mês atual</button>
-            )}
-            <button onClick={() => setMesVis((m) => mesPosterior(m.ano, m.mes))}>›</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={() => setOcultar((v) => !v)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: ocultar ? "var(--accent2)" : "var(--text3)", padding: "6px", borderRadius: 8, display: "flex", alignItems: "center" }}
+              title={ocultar ? "Mostrar valores" : "Ocultar valores"}
+            >
+              {ocultar ? <IconOlhoFechado /> : <IconOlho />}
+            </button>
+            <div className="month-nav">
+              <button onClick={() => setMesVis((m) => mesAnterior(m.ano, m.mes))}>‹</button>
+              {!ehMesAtual && (
+                <button className="mes-atual-btn" onClick={() => setMesVis(mesAtualReal())}>Mês atual</button>
+              )}
+              <button onClick={() => setMesVis((m) => mesPosterior(m.ano, m.mes))}>›</button>
+            </div>
           </div>
         </div>
 
         <div className="content">
-          {aba === "inicio"     && <AbaInicio dadosMes={dadosMes} cicloData={cicloData} saudeMes={saudeMes} ehMesFuturo={ehMesFuturo} ehMesPassado={ehMesPassado} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} />}
-          {aba === "transacoes" && <AbaTransacoes state={state} mesVis={mesVis} dadosMes={dadosMes} excluir={excluir} setModal={setModal} exportarCSV={exportarCSV} />}
-          {aba === "historico"  && <AbaHistorico historico={historico} />}
-          {aba === "config"     && <AbaConfig state={state} update={update} setModal={setModal} excluir={excluir} editar={editar} />}
+          {aba === "inicio"     && <AbaInicio dadosMes={dadosMes} cicloData={cicloData} saudeMes={saudeMes} ehMesFuturo={ehMesFuturo} ehMesPassado={ehMesPassado} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} ocultar={ocultar} />}
+          {aba === "transacoes" && <AbaTransacoes state={state} mesVis={mesVis} dadosMes={dadosMes} excluir={excluir} setModal={setModal} exportarCSV={exportarCSV} ocultar={ocultar} />}
+          {aba === "historico"  && <AbaHistorico historico={historico} ocultar={ocultar} />}
+          {aba === "config"     && <AbaConfig state={state} update={update} setModal={setModal} excluir={excluir} editar={editar} mover={mover} />}
         </div>
 
         {(aba === "inicio" || aba === "transacoes") && (
@@ -686,7 +710,7 @@ export default function App() {
 }
 
 // ─── Aba Início ───────────────────────────────────────────────────────────────
-function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, marcarPago, editarValorPagamento }) {
+function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, marcarPago, editarValorPagamento, ocultar }) {
   const { totalReceitas, totalDespesas, saldo } = dadosMes;
   return (
     <>
@@ -695,15 +719,15 @@ function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, m
 
       <div className="hero">
         <div className="hero-label">{ehMesFuturo ? "PROJEÇÃO DO MÊS" : "SALDO DO MÊS"}</div>
-        <div className={`hero-value ${saldo >= 0 ? "pos" : "neg"}`}>{fmtBRL(saldo)}</div>
+        <div className={`hero-value ${saldo >= 0 ? "pos" : "neg"}`}>{fmtV(saldo, ocultar)}</div>
         <div className="hero-grid">
           <div className="hero-cell">
             <div className="hero-cell-label">↑ Receitas</div>
-            <div className="hero-cell-val" style={{ color: "var(--green)" }}>{fmtBRL(totalReceitas)}</div>
+            <div className="hero-cell-val" style={{ color: "var(--green)" }}>{fmtV(totalReceitas, ocultar)}</div>
           </div>
           <div className="hero-cell">
             <div className="hero-cell-label">↓ Despesas</div>
-            <div className="hero-cell-val" style={{ color: "var(--red)" }}>{fmtBRL(totalDespesas)}</div>
+            <div className="hero-cell-val" style={{ color: "var(--red)" }}>{fmtV(totalDespesas, ocultar)}</div>
           </div>
         </div>
       </div>
@@ -711,13 +735,13 @@ function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, m
       {!ehMesPassado && (
         <>
           <div className="sec-title">Saúde do Próximo Mês</div>
-          <SaudeCard saudeMes={saudeMes} />
+          <SaudeCard saudeMes={saudeMes} ocultar={ocultar} />
         </>
       )}
 
       <div className="sec-title">Ciclos de Pagamento</div>
       {cicloData.map((ciclo, i) => (
-        <CicloCard key={i} ciclo={ciclo} ehMesFuturo={ehMesFuturo} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} />
+        <CicloCard key={i} ciclo={ciclo} ehMesFuturo={ehMesFuturo} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} ocultar={ocultar} />
       ))}
 
       <div style={{ textAlign: "center", marginTop: 24, paddingBottom: 4 }}>
@@ -729,7 +753,7 @@ function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, m
   );
 }
 
-function SaudeCard({ saudeMes }) {
+function SaudeCard({ saudeMes, ocultar }) {
   const { recFixProx, despFixProx, saldoProx, pct, status } = saudeMes;
   const label = status === "ok" ? "Folgado" : status === "warn" ? "Apertado" : "Sobrecarregado";
   const emoji = status === "ok" ? "✓" : status === "warn" ? "⚠" : "✕";
@@ -738,26 +762,26 @@ function SaudeCard({ saudeMes }) {
     <div className="card">
       <span className={`saude-badge saude-${status}`}>{emoji} {label}</span>
       <div className="progress-wrap">
-        <div className="progress-row"><span>Comprometido</span><span>{pct}%</span></div>
-        <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: barColor }} /></div>
+        <div className="progress-row"><span>Comprometido</span><span>{ocultar ? "••%" : `${pct}%`}</span></div>
+        <div className="progress-bar"><div className="progress-fill" style={{ width: ocultar ? "0%" : `${pct}%`, background: barColor }} /></div>
       </div>
       <div className="stat-row">
         <span className="stat-label">Receitas previstas</span>
-        <span className="stat-val" style={{ color: "var(--green)" }}>{fmtBRL(recFixProx)}</span>
+        <span className="stat-val" style={{ color: "var(--green)" }}>{fmtV(recFixProx, ocultar)}</span>
       </div>
       <div className="stat-row">
         <span className="stat-label">Despesas fixas previstas</span>
-        <span className="stat-val" style={{ color: "var(--red)" }}>{fmtBRL(despFixProx)}</span>
+        <span className="stat-val" style={{ color: "var(--red)" }}>{fmtV(despFixProx, ocultar)}</span>
       </div>
       <div className="stat-row">
         <span className="stat-label" style={{ fontWeight: 600, color: "var(--text)" }}>Disponível para investir</span>
-        <span className="stat-val" style={{ color: saldoProx >= 0 ? "var(--green)" : "var(--red)", fontSize: 16 }}>{fmtBRL(saldoProx)}</span>
+        <span className="stat-val" style={{ color: saldoProx >= 0 ? "var(--green)" : "var(--red)", fontSize: 16 }}>{fmtV(saldoProx, ocultar)}</span>
       </div>
     </div>
   );
 }
 
-function CicloCard({ ciclo, ehMesFuturo, marcarPago, editarValorPagamento }) {
+function CicloCard({ ciclo, ehMesFuturo, marcarPago, editarValorPagamento, ocultar }) {
   const totalFixas = ciclo.despesas.reduce((s, d) => s + d.valorReal, 0);
   const totalVar   = ciclo.despesasVar.reduce((s, d) => s + d.valor, 0);
   const totalDesp  = totalFixas + totalVar;
@@ -774,15 +798,15 @@ function CicloCard({ ciclo, ehMesFuturo, marcarPago, editarValorPagamento }) {
           <div className="ciclo-sub">{ciclo.despesas.length} fixas · {ciclo.despesasVar.length} variáveis</div>
         </div>
         <div>
-          <div className="ciclo-saldo" style={{ color: saldoCiclo >= 0 ? "var(--green)" : "var(--red)" }}>{fmtBRL(saldoCiclo)}</div>
+          <div className="ciclo-saldo" style={{ color: saldoCiclo >= 0 ? "var(--green)" : "var(--red)" }}>{fmtV(saldoCiclo, ocultar)}</div>
           <div className="ciclo-saldo-label">saldo do ciclo</div>
         </div>
       </div>
 
       <div className="progress-wrap">
         <div className="progress-row">
-          <span>Receita: {fmtBRL(ciclo.receita)}</span>
-          <span>{pct}% usado</span>
+          <span>Receita: {fmtV(ciclo.receita, ocultar)}</span>
+          <span>{ocultar ? "••%" : `${pct}% usado`}</span>
         </div>
         <div className="progress-bar">
           <div className="progress-fill" style={{ width: `${pct}%`, background: barColor }} />
@@ -813,7 +837,7 @@ function CicloCard({ ciclo, ehMesFuturo, marcarPago, editarValorPagamento }) {
                         <input type="number" value={d.valorReal} onChange={(e) => editarValorPagamento(d.id, e.target.value)}
                           style={{ width: 90, background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: 6, padding: "3px 6px", color: "var(--text)", fontFamily: "var(--mono)", fontSize: 13, textAlign: "right" }} />
                       ) : (
-                        <span className="tx-val neg">{fmtBRL(d.valorReal)}</span>
+                        <span className="tx-val neg">{fmtV(d.valorReal, ocultar)}</span>
                       )}
                       <span className={`pill ${ehMesFuturo ? "pill-futuro" : d.pago ? "pill-pago" : "pill-pendente"}`}>
                         {ehMesFuturo ? "Previsto" : d.pago ? "Pago" : "Pendente"}
@@ -837,7 +861,7 @@ function CicloCard({ ciclo, ehMesFuturo, marcarPago, editarValorPagamento }) {
                       <div className="tx-name">{d.nome}</div>
                       <div className="tx-meta">{d.data} · {cat?.label}</div>
                     </div>
-                    <span className="tx-val neg">{fmtBRL(d.valor)}</span>
+                    <span className="tx-val neg">{fmtV(d.valor, ocultar)}</span>
                   </div>
                 );
               })}
@@ -854,7 +878,7 @@ function CicloCard({ ciclo, ehMesFuturo, marcarPago, editarValorPagamento }) {
 }
 
 // ─── Aba Transações ───────────────────────────────────────────────────────────
-function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV }) {
+function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV, ocultar }) {
   const { ano, mes } = mesVis;
   const [filtro, setFiltro] = useState("todos");
 
@@ -888,7 +912,7 @@ function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV
                   <div className="tx-name">{r.nome}</div>
                   <div className="tx-meta">Fixa · Dia {r.dia}</div>
                 </div>
-                <span className="tx-val pos">{fmtBRL(r.valor)}</span>
+                <span className="tx-val pos">{fmtV(r.valor, ocultar)}</span>
                 <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editReceita", subtipo: "fixa", item: r })}>✎</button>
               </div>
             ))}
@@ -899,7 +923,7 @@ function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV
                   <div className="tx-name">{r.nome}</div>
                   <div className="tx-meta">Avulsa · {r.data}</div>
                 </div>
-                <span className="tx-val pos">{fmtBRL(r.valor)}</span>
+                <span className="tx-val pos">{fmtV(r.valor, ocultar)}</span>
                 <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editReceita", subtipo: "avulsa", item: r })}>✎</button>
                 <button className="btn btn-danger btn-sm btn-icon" title="Excluir" onClick={() => excluir("receitasAvulsas", r.id)}>✕</button>
               </div>
@@ -925,7 +949,7 @@ function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV
                     <div className="tx-meta">{cat?.label} · Dia {d.diaVencimento}{d.dataFim ? ` · até ${d.dataFim}` : ""}</div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
-                    <span className="tx-val neg">{fmtBRL(pg?.valor ?? d.valor)}</span>
+                    <span className="tx-val neg">{fmtV(pg?.valor ?? d.valor, ocultar)}</span>
                     <span className={`pill ${pg?.pago ? "pill-pago" : "pill-pendente"}`}>{pg?.pago ? "Pago" : "Pendente"}</span>
                   </div>
                   <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editDespesaFixa", item: d })}>✎</button>
@@ -946,7 +970,7 @@ function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV
                     <div className="tx-name">{d.nome}</div>
                     <div className="tx-meta">{cat?.label} · {d.data}</div>
                   </div>
-                  <span className="tx-val neg">{fmtBRL(d.valor)}</span>
+                  <span className="tx-val neg">{fmtV(d.valor, ocultar)}</span>
                   <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editDespesaVar", item: d })}>✎</button>
                   <button className="btn btn-danger btn-sm btn-icon" title="Excluir" onClick={() => excluir("despesasVariaveis", d.id)}>✕</button>
                 </div>
@@ -960,7 +984,7 @@ function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV
 }
 
 // ─── Aba Histórico ────────────────────────────────────────────────────────────
-function AbaHistorico({ historico }) {
+function AbaHistorico({ historico, ocultar }) {
   const comDados = historico.filter((h) => !h.ehFuturo);
   const maxVal = Math.max(...comDados.map((h) => Math.max(h.totalReceitas, h.totalDespesas)), 1);
 
@@ -1001,11 +1025,11 @@ function AbaHistorico({ historico }) {
         <div key={i} className="card-sm">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span style={{ fontWeight: 600, fontSize: 14 }}>{h.label}</span>
-            <span style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 15, color: h.saldo >= 0 ? "var(--green)" : "var(--red)" }}>{fmtBRL(h.saldo)}</span>
+            <span style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 15, color: h.saldo >= 0 ? "var(--green)" : "var(--red)" }}>{fmtV(h.saldo, ocultar)}</span>
           </div>
           <div style={{ display: "flex", gap: 16 }}>
-            <span style={{ fontSize: 12, color: "var(--green)" }}>↑ {fmtBRL(h.totalReceitas)}</span>
-            <span style={{ fontSize: 12, color: "var(--red)" }}>↓ {fmtBRL(h.totalDespesas)}</span>
+            <span style={{ fontSize: 12, color: "var(--green)" }}>↑ {fmtV(h.totalReceitas, ocultar)}</span>
+            <span style={{ fontSize: 12, color: "var(--red)" }}>↓ {fmtV(h.totalDespesas, ocultar)}</span>
           </div>
         </div>
       ))}
@@ -1014,7 +1038,7 @@ function AbaHistorico({ historico }) {
 }
 
 // ─── Aba Config ───────────────────────────────────────────────────────────────
-function AbaConfig({ state, update, setModal, excluir, editar }) {
+function AbaConfig({ state, update, setModal, excluir, editar, mover }) {
   return (
     <>
       <div className="sec-title">Configurações Gerais</div>
@@ -1051,8 +1075,14 @@ function AbaConfig({ state, update, setModal, excluir, editar }) {
 
       <div className="sec-title">Receitas Fixas</div>
       {state.receitasFixas.length === 0 && <div className="empty" style={{ padding: "12px 0" }}>Nenhuma receita fixa cadastrada</div>}
-      {state.receitasFixas.map((r) => (
-        <div key={r.id} className="card-sm" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      {state.receitasFixas.map((r, idx) => (
+        <div key={r.id} className="card-sm" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <button className="btn btn-ghost btn-icon btn-sm" style={{ padding: "2px 6px", fontSize: 11, opacity: idx === 0 ? 0.2 : 1 }}
+              onClick={() => mover("receitasFixas", r.id, -1)} disabled={idx === 0}>▲</button>
+            <button className="btn btn-ghost btn-icon btn-sm" style={{ padding: "2px 6px", fontSize: 11, opacity: idx === state.receitasFixas.length - 1 ? 0.2 : 1 }}
+              onClick={() => mover("receitasFixas", r.id, 1)} disabled={idx === state.receitasFixas.length - 1}>▼</button>
+          </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 500, fontSize: 13 }}>{r.nome}</div>
             <div style={{ fontSize: 11, color: "var(--text2)" }}>Dia {r.dia} · {fmtBRL(r.valor)}</div>
@@ -1065,10 +1095,16 @@ function AbaConfig({ state, update, setModal, excluir, editar }) {
 
       <div className="sec-title">Despesas Fixas Cadastradas</div>
       {state.despesasFixas.length === 0 && <div className="empty" style={{ padding: "12px 0" }}>Nenhuma despesa fixa cadastrada</div>}
-      {state.despesasFixas.map((d) => {
+      {state.despesasFixas.map((d, idx) => {
         const cat = CAT_MAP[d.categoria];
         return (
-          <div key={d.id} className="card-sm" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div key={d.id} className="card-sm" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <button className="btn btn-ghost btn-icon btn-sm" style={{ padding: "2px 6px", fontSize: 11, opacity: idx === 0 ? 0.2 : 1 }}
+                onClick={() => mover("despesasFixas", d.id, -1)} disabled={idx === 0}>▲</button>
+              <button className="btn btn-ghost btn-icon btn-sm" style={{ padding: "2px 6px", fontSize: 11, opacity: idx === state.despesasFixas.length - 1 ? 0.2 : 1 }}
+                onClick={() => mover("despesasFixas", d.id, 1)} disabled={idx === state.despesasFixas.length - 1}>▼</button>
+            </div>
             <div className="tx-icon" style={{ background: `${CAT_CORES[d.categoria]}18`, width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{cat?.icon || "📦"}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 500, fontSize: 13 }}>{d.nome}</div>
@@ -1272,3 +1308,5 @@ const IconHome  = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 const IconList  = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>;
 const IconChart = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>;
 const IconGear  = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>;
+const IconOlho = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+const IconOlhoFechado = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
