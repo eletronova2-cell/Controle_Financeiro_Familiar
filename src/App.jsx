@@ -4,9 +4,14 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 const fmtBRL = (v) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
 
-const today = () => {
+const todayStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+const mesAtualReal = () => {
+  const d = new Date();
+  return { ano: d.getFullYear(), mes: d.getMonth() + 1 };
 };
 
 const monthLabel = (y, m) => {
@@ -14,21 +19,38 @@ const monthLabel = (y, m) => {
   return `${names[m - 1]}/${String(y).slice(2)}`;
 };
 
+const mesAnterior = (ano, mes) => mes === 1 ? { ano: ano - 1, mes: 12 } : { ano, mes: mes - 1 };
+const mesPosterior = (ano, mes) => mes === 12 ? { ano: ano + 1, mes: 1 } : { ano, mes: mes + 1 };
+const mesAntes = (a1, m1, a2, m2) => a1 < a2 || (a1 === a2 && m1 < m2);
+const mesIgual = (a1, m1, a2, m2) => a1 === a2 && m1 === m2;
+
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 const CATEGORIAS = [
-  { id: "moradia",    label: "Moradia",       icon: "🏠" },
-  { id: "alimentacao",label: "Alimentação",   icon: "🛒" },
-  { id: "transporte", label: "Transporte",    icon: "🚗" },
-  { id: "educacao",   label: "Educação",      icon: "📚" },
-  { id: "saude",      label: "Saúde",         icon: "🏥" },
-  { id: "lazer",      label: "Lazer",         icon: "🎉" },
-  { id: "servicos",   label: "Serviços",      icon: "📱" },
-  { id: "investimento",label:"Investimento",  icon: "📈" },
-  { id: "outros",     label: "Outros",        icon: "📦" },
+  { id: "moradia",     label: "Moradia",      icon: "🏠" },
+  { id: "alimentacao", label: "Alimentação",  icon: "🛒" },
+  { id: "transporte",  label: "Transporte",   icon: "🚗" },
+  { id: "educacao",    label: "Educação",     icon: "📚" },
+  { id: "saude",       label: "Saúde",        icon: "🏥" },
+  { id: "lazer",       label: "Lazer",        icon: "🎉" },
+  { id: "servicos",    label: "Serviços",     icon: "📱" },
+  { id: "investimento",label: "Investimento", icon: "📈" },
+  { id: "outros",      label: "Outros",       icon: "📦" },
 ];
 
 const CAT_MAP = Object.fromEntries(CATEGORIAS.map((c) => [c.id, c]));
+
+const CAT_CORES = {
+  moradia:      "#2563eb",
+  alimentacao:  "#16a34a",
+  transporte:   "#d97706",
+  educacao:     "#7c3aed",
+  saude:        "#dc2626",
+  lazer:        "#db2777",
+  servicos:     "#0891b2",
+  investimento: "#059669",
+  outros:       "#6b7280",
+};
 
 const ESTADO_INICIAL = {
   config: { ciclo1: 15, ciclo2: 30, nomeFamilia: "Minha Família" },
@@ -36,41 +58,73 @@ const ESTADO_INICIAL = {
   despesasFixas: [],
   receitasAvulsas: [],
   despesasVariaveis: [],
-  pagamentos: {}, // key: `${despFixaId}-${ano}-${mes}` → { pago: bool, valor: number }
+  pagamentos: {},
 };
 
-// ─── Storage ─────────────────────────────────────────────────────────────────
+// ─── Storage ──────────────────────────────────────────────────────────────────
 const STORAGE_KEY = "controle-financeiro-v1";
-
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return ESTADO_INICIAL;
-    const s = JSON.parse(raw);
-    return { ...ESTADO_INICIAL, ...s };
-  } catch {
-    return ESTADO_INICIAL;
+    return { ...ESTADO_INICIAL, ...JSON.parse(raw) };
+  } catch { return ESTADO_INICIAL; }
+}
+function saveState(s) { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }
+
+// ─── Helpers de cálculo ───────────────────────────────────────────────────────
+function itemAtivoNoMes(item, ano, mes) {
+  const ini = new Date(item.dataInicio + "T00:00:00");
+  const fimMes = new Date(ano, mes - 1, 28);
+  if (ini > fimMes) return false;
+  if (item.dataFim) {
+    const fim = new Date(item.dataFim + "T00:00:00");
+    const inicioMes = new Date(ano, mes - 1, 1);
+    if (fim < inicioMes) return false;
   }
+  return true;
 }
 
-function saveState(s) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+function calcularMes(state, ano, mes) {
+  const agora = mesAtualReal();
+  const ehFuturo = mesAntes(agora.ano, agora.mes, ano, mes);
+
+  const rfAtivas = state.receitasFixas.filter((r) => itemAtivoNoMes(r, ano, mes));
+  const totalRF = rfAtivas.reduce((s, r) => s + r.valor, 0);
+
+  const raDoMes = state.receitasAvulsas.filter((r) => {
+    const d = new Date(r.data + "T00:00:00");
+    return d.getFullYear() === ano && d.getMonth() + 1 === mes;
+  });
+  const totalRA = raDoMes.reduce((s, r) => s + r.valor, 0);
+
+  const dfAtivas = state.despesasFixas.filter((d) => itemAtivoNoMes(d, ano, mes));
+  const totalDF = ehFuturo ? 0 : dfAtivas.reduce((s, d) => {
+    const key = `${d.id}-${ano}-${mes}`;
+    const pg = state.pagamentos[key];
+    return s + (pg ? pg.valor : d.valor);
+  }, 0);
+
+  const dvDoMes = state.despesasVariaveis.filter((d) => {
+    const dt = new Date(d.data + "T00:00:00");
+    return dt.getFullYear() === ano && dt.getMonth() + 1 === mes;
+  });
+  const totalDV = dvDoMes.reduce((s, d) => s + d.valor, 0);
+
+  const totalReceitas = totalRF + totalRA;
+  const totalDespesas = ehFuturo ? 0 : totalDF + totalDV;
+
+  return {
+    totalReceitas: ehFuturo ? totalRF : totalReceitas,
+    totalDespesas,
+    saldo: (ehFuturo ? totalRF : totalReceitas) - totalDespesas,
+    dfAtivas,
+    dvDoMes,
+    ehFuturo,
+  };
 }
 
-// ─── Cores por categoria ──────────────────────────────────────────────────────
-const CAT_CORES = {
-  moradia:     "#2563eb",
-  alimentacao: "#16a34a",
-  transporte:  "#d97706",
-  educacao:    "#7c3aed",
-  saude:       "#dc2626",
-  lazer:       "#db2777",
-  servicos:    "#0891b2",
-  investimento:"#059669",
-  outros:      "#6b7280",
-};
-
-// ─── CSS ─────────────────────────────────────────────────────────────────────
+// ─── CSS ──────────────────────────────────────────────────────────────────────
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300&family=DM+Mono:wght@400;500&display=swap');
 
@@ -112,7 +166,6 @@ const CSS = `
     overflow: hidden;
   }
 
-  /* ── Nav ── */
   .topbar {
     height: var(--nav-h);
     display: flex;
@@ -126,27 +179,16 @@ const CSS = `
   }
   .topbar-title { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; }
   .topbar-sub   { font-size: 12px; color: var(--text2); margin-top: 1px; }
-  .topbar-badge {
-    background: var(--accent);
-    color: #fff;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 9px;
-    border-radius: 20px;
-    letter-spacing: 0.3px;
-  }
 
-  /* ── Scrollable content ── */
   .content {
     flex: 1;
     overflow-y: auto;
     padding: 16px;
-    padding-bottom: 24px;
+    padding-bottom: 80px;
     scroll-behavior: smooth;
   }
   .content::-webkit-scrollbar { width: 0; }
 
-  /* ── Tab bar ── */
   .tabbar {
     height: var(--tab-h);
     display: flex;
@@ -177,7 +219,6 @@ const CSS = `
   .tab-btn.active { color: var(--accent2); }
   .tab-btn svg { width: 22px; height: 22px; }
 
-  /* ── Cards ── */
   .card {
     background: var(--bg2);
     border: 1px solid var(--border);
@@ -193,7 +234,6 @@ const CSS = `
     margin-bottom: 8px;
   }
 
-  /* ── Seção título ── */
   .sec-title {
     font-size: 11px;
     font-weight: 600;
@@ -204,7 +244,6 @@ const CSS = `
   }
   .sec-title:first-child { margin-top: 4px; }
 
-  /* ── Summary hero ── */
   .hero {
     background: linear-gradient(135deg, #1e2140 0%, #16192e 100%);
     border: 1px solid rgba(99,102,241,0.2);
@@ -227,18 +266,17 @@ const CSS = `
   .hero-value.pos { color: var(--green); }
   .hero-value.neg { color: var(--red); }
   .hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
-  .hero-cell { }
   .hero-cell-label { font-size: 11px; color: var(--text2); margin-bottom: 3px; }
   .hero-cell-val { font-size: 16px; font-weight: 600; font-family: var(--mono); }
 
-  /* ── Ciclo cards ── */
   .ciclo-card {
     border-radius: var(--radius);
     padding: 16px;
     margin-bottom: 10px;
     border: 1px solid var(--border);
+    background: var(--bg2);
   }
-  .ciclo-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+  .ciclo-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; cursor: pointer; }
   .ciclo-title  { font-size: 14px; font-weight: 600; }
   .ciclo-sub    { font-size: 11px; color: var(--text2); margin-top: 2px; }
   .ciclo-saldo  { font-size: 18px; font-weight: 700; font-family: var(--mono); text-align: right; }
@@ -249,7 +287,6 @@ const CSS = `
   .progress-bar  { height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
   .progress-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
 
-  /* ── Saúde financeira ── */
   .saude-badge {
     display: inline-flex;
     align-items: center;
@@ -260,15 +297,14 @@ const CSS = `
     font-weight: 600;
     margin-bottom: 12px;
   }
-  .saude-ok    { background: rgba(52,211,153,0.12); color: var(--green); border: 1px solid rgba(52,211,153,0.2); }
-  .saude-warn  { background: rgba(251,191,36,0.12);  color: var(--yellow);border: 1px solid rgba(251,191,36,0.2); }
-  .saude-critico{ background: rgba(248,113,113,0.12); color: var(--red);  border: 1px solid rgba(248,113,113,0.2); }
+  .saude-ok     { background: rgba(52,211,153,0.12);  color: var(--green);  border: 1px solid rgba(52,211,153,0.2); }
+  .saude-warn   { background: rgba(251,191,36,0.12);   color: var(--yellow); border: 1px solid rgba(251,191,36,0.2); }
+  .saude-critico{ background: rgba(248,113,113,0.12);  color: var(--red);    border: 1px solid rgba(248,113,113,0.2); }
 
-  /* ── Transaction rows ── */
   .tx-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     padding: 10px 0;
     border-bottom: 1px solid var(--border);
   }
@@ -287,17 +323,15 @@ const CSS = `
   .tx-val.pos { color: var(--green); }
   .tx-val.neg { color: var(--red); }
 
-  /* ── Status pill ── */
   .pill {
     display: inline-flex; align-items: center; gap: 4px;
     font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
     padding: 2px 8px; border-radius: 20px;
   }
-  .pill-pago    { background: rgba(52,211,153,0.12); color: var(--green); }
-  .pill-pendente{ background: rgba(251,191,36,0.12);  color: var(--yellow); }
-  .pill-vencido { background: rgba(248,113,113,0.12); color: var(--red); }
+  .pill-pago     { background: rgba(52,211,153,0.12);  color: var(--green); }
+  .pill-pendente { background: rgba(251,191,36,0.12);   color: var(--yellow); }
+  .pill-futuro   { background: rgba(96,165,250,0.12);   color: var(--blue); }
 
-  /* ── Buttons ── */
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     padding: 10px 18px;
@@ -305,17 +339,18 @@ const CSS = `
     font-family: var(--font); font-size: 14px; font-weight: 500;
     cursor: pointer; border: none; transition: all 0.15s;
   }
-  .btn-primary  { background: var(--accent); color: #fff; }
-  .btn-primary:hover  { background: #4f52d8; }
-  .btn-ghost    { background: var(--bg3); color: var(--text); border: 1px solid var(--border2); }
-  .btn-ghost:hover    { background: var(--bg2); }
-  .btn-danger   { background: rgba(248,113,113,0.15); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
-  .btn-danger:hover   { background: rgba(248,113,113,0.25); }
-  .btn-sm { padding: 6px 12px; font-size: 12px; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #4f52d8; }
+  .btn-ghost { background: var(--bg3); color: var(--text); border: 1px solid var(--border2); }
+  .btn-ghost:hover { background: var(--bg2); }
+  .btn-danger { background: rgba(248,113,113,0.15); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
+  .btn-danger:hover { background: rgba(248,113,113,0.25); }
+  .btn-edit { background: rgba(96,165,250,0.1); color: var(--blue); border: 1px solid rgba(96,165,250,0.2); }
+  .btn-edit:hover { background: rgba(96,165,250,0.2); }
+  .btn-sm   { padding: 6px 12px; font-size: 12px; }
   .btn-full { width: 100%; }
-  .btn-icon { padding: 8px; border-radius: 8px; }
+  .btn-icon { padding: 7px; border-radius: 8px; }
 
-  /* ── FAB ── */
   .fab {
     position: fixed;
     bottom: calc(var(--tab-h) + 16px);
@@ -334,7 +369,6 @@ const CSS = `
   }
   .fab:hover { transform: scale(1.06); box-shadow: 0 6px 24px rgba(99,102,241,0.5); }
 
-  /* ── Modal ── */
   .modal-overlay {
     position: fixed; inset: 0;
     background: rgba(0,0,0,0.7);
@@ -358,7 +392,6 @@ const CSS = `
   .modal-title { font-size: 17px; font-weight: 600; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
   .modal::-webkit-scrollbar { width: 0; }
 
-  /* ── Form ── */
   .field { margin-bottom: 14px; }
   .field label { font-size: 12px; color: var(--text2); font-weight: 500; display: block; margin-bottom: 6px; letter-spacing: 0.3px; }
   .field input, .field select, .field textarea {
@@ -378,8 +411,9 @@ const CSS = `
   .field input:focus, .field select:focus { border-color: var(--accent); }
   .field select option { background: var(--bg2); }
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
   .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; }
-  .toggle-row label { font-size: 13px; color: var(--text); }
+  .toggle-row label { font-size: 13px; color: var(--text); flex: 1; padding-right: 12px; }
   .toggle {
     width: 40px; height: 22px;
     background: var(--bg3);
@@ -402,27 +436,28 @@ const CSS = `
   }
   .toggle.on::after { transform: translateX(18px); }
 
-  /* ── Histórico chart ── */
   .chart-wrap { display: flex; align-items: flex-end; gap: 6px; height: 80px; margin: 8px 0 4px; }
   .chart-bar-group { flex: 1; display: flex; align-items: flex-end; gap: 2px; }
   .chart-bar { flex: 1; border-radius: 3px 3px 0 0; min-height: 2px; transition: height 0.4s ease; }
   .chart-labels { display: flex; gap: 6px; }
   .chart-label { flex: 1; font-size: 9px; color: var(--text3); text-align: center; }
 
-  /* ── Misc ── */
-  .divider { height: 1px; background: var(--border); margin: 12px 0; }
   .empty { text-align: center; color: var(--text3); font-size: 13px; padding: 32px 0; }
-  .badge-cat {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: 11px; padding: 3px 8px;
-    border-radius: 6px; background: var(--bg3);
-    color: var(--text2);
+  .divider { height: 1px; background: var(--border); margin: 12px 0; }
+
+  .month-nav { display: flex; align-items: center; gap: 6px; }
+  .month-nav button {
+    background: none; border: none; color: var(--text2); cursor: pointer;
+    font-size: 18px; padding: 4px 8px; border-radius: 6px;
+    font-family: var(--font);
   }
-  .row-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
-  .month-nav { display: flex; align-items: center; gap: 12px; }
-  .month-nav button { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 18px; padding: 4px 8px; border-radius: 6px; }
   .month-nav button:hover { background: var(--bg3); color: var(--text); }
-  .month-nav span { font-size: 15px; font-weight: 600; min-width: 80px; text-align: center; }
+  .mes-atual-btn {
+    font-size: 11px !important; padding: 4px 10px !important;
+    background: var(--bg3) !important; border: 1px solid var(--border2) !important;
+    border-radius: 20px !important; color: var(--text2) !important;
+  }
+  .mes-atual-btn:hover { color: var(--text) !important; }
 
   .check-btn {
     width: 22px; height: 22px;
@@ -441,6 +476,18 @@ const CSS = `
   .stat-label { color: var(--text2); }
   .stat-val   { font-weight: 600; font-family: var(--mono); }
 
+  .banner {
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-size: 12px;
+    margin-bottom: 14px;
+    text-align: center;
+  }
+  .banner-futuro  { background: rgba(96,165,250,0.08);   border: 1px solid rgba(96,165,250,0.2);  color: var(--blue); }
+  .banner-passado { background: rgba(139,144,167,0.08);  border: 1px solid var(--border);          color: var(--text2); }
+
+  .sub-label { font-size: 11px; color: var(--text3); font-weight: 600; letter-spacing: 0.5px; margin-bottom: 6px; }
+
   @media (min-width: 600px) {
     .fab { right: calc(50% - 215px + 16px); }
   }
@@ -450,210 +497,107 @@ const CSS = `
 export default function App() {
   const [state, setState] = useState(() => loadState());
   const [aba, setAba] = useState("inicio");
-  const [modal, setModal] = useState(null); // null | { tipo, dados? }
-  const [mesAtual, setMesAtual] = useState(() => {
-    const d = new Date();
-    return { ano: d.getFullYear(), mes: d.getMonth() + 1 };
-  });
+  const [modal, setModal] = useState(null);
+  const [mesVis, setMesVis] = useState(() => mesAtualReal());
 
-  useEffect(() => {
-    saveState(state);
-  }, [state]);
+  useEffect(() => { saveState(state); }, [state]);
 
   const update = useCallback((fn) => {
-    setState((prev) => {
-      const next = { ...prev };
-      fn(next);
-      return next;
-    });
+    setState((prev) => { const next = { ...prev }; fn(next); return next; });
   }, []);
 
-  // ─ Computed ─
-  const { totalReceitas, totalDespesas, saldo, cicloData, saudeMes, historico } = useMemo(() => {
-    const { ano, mes } = mesAtual;
-    const { config, receitasFixas, receitasAvulsas, despesasFixas, despesasVariaveis, pagamentos } = state;
+  const agora = mesAtualReal();
+  const ehMesAtual  = mesIgual(mesVis.ano, mesVis.mes, agora.ano, agora.mes);
+  const ehMesFuturo = mesAntes(agora.ano, agora.mes, mesVis.ano, mesVis.mes);
+  const ehMesPassado = mesAntes(mesVis.ano, mesVis.mes, agora.ano, agora.mes);
 
-    // Receitas do mês
-    const rfMes = receitasFixas.reduce((s, r) => {
-      const ini = new Date(r.dataInicio + "T00:00:00");
-      const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : null;
-      const mesRef = new Date(ano, mes - 1, 1);
-      if (ini <= new Date(ano, mes - 1, 28) && (!fim || fim >= mesRef)) return s + r.valor;
-      return s;
-    }, 0);
+  const dadosMes = useMemo(() => calcularMes(state, mesVis.ano, mesVis.mes), [state, mesVis]);
 
-    const raMes = receitasAvulsas.filter((r) => {
+  const cicloData = useMemo(() => {
+    const { ano, mes } = mesVis;
+    const { config, receitasFixas, receitasAvulsas, pagamentos } = state;
+    const { dfAtivas, dvDoMes } = dadosMes;
+    const c1 = config.ciclo1;
+
+    const recAvCiclo = (minDia, maxDia) => receitasAvulsas.filter((r) => {
       const d = new Date(r.data + "T00:00:00");
-      return d.getFullYear() === ano && d.getMonth() + 1 === mes;
+      const dia = d.getDate();
+      return d.getFullYear() === ano && d.getMonth() + 1 === mes && dia > minDia && dia <= maxDia;
     }).reduce((s, r) => s + r.valor, 0);
 
-    const totalReceitas = rfMes + raMes;
+    const rec1 = receitasFixas.filter((r) => itemAtivoNoMes(r, ano, mes) && r.dia <= c1)
+      .reduce((s, r) => s + r.valor, 0) + recAvCiclo(0, c1);
+    const rec2 = receitasFixas.filter((r) => itemAtivoNoMes(r, ano, mes) && r.dia > c1)
+      .reduce((s, r) => s + r.valor, 0) + recAvCiclo(c1, 32);
 
-    // Despesas fixas do mês
-    const dfMes = despesasFixas.filter((d) => {
-      const ini = new Date(d.dataInicio + "T00:00:00");
-      const fim = d.dataFim ? new Date(d.dataFim + "T00:00:00") : null;
-      const mesRef = new Date(ano, mes - 1, 1);
-      return ini <= new Date(ano, mes - 1, 28) && (!fim || fim >= mesRef);
-    });
-
-    // Despesas variáveis do mês
-    const dvMes = despesasVariaveis.filter((d) => {
-      const dt = new Date(d.data + "T00:00:00");
-      return dt.getFullYear() === ano && dt.getMonth() + 1 === mes;
-    });
-
-    const totalDespesasFixas = dfMes.reduce((s, d) => {
+    const mapD = (d) => {
       const key = `${d.id}-${ano}-${mes}`;
       const pg = pagamentos[key];
-      return s + (pg ? pg.valor : d.valor);
-    }, 0);
+      return { ...d, pago: pg?.pago || false, valorReal: pg?.valor ?? d.valor };
+    };
 
-    const totalDespesasVar = dvMes.reduce((s, d) => s + d.valor, 0);
-    const totalDespesas = totalDespesasFixas + totalDespesasVar;
-    const saldo = totalReceitas - totalDespesas;
-
-    // Ciclos
-    const c1 = config.ciclo1;
-    const c2 = config.ciclo2;
-    const cicloData = [
+    return [
       {
-        label: `Até dia ${c1}`,
-        receita: receitasFixas.filter((r) => r.dia === c2 || r.dia <= c1).reduce((s, r) => {
-          const ini = new Date(r.dataInicio + "T00:00:00");
-          const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : null;
-          const mesRef = new Date(ano, mes - 1, 1);
-          if (ini <= new Date(ano, mes - 1, 28) && (!fim || fim >= mesRef)) return s + r.valor;
-          return s;
-        }, 0) + receitasAvulsas.filter((r) => {
-          const d = new Date(r.data + "T00:00:00");
-          return d.getFullYear() === ano && d.getMonth() + 1 === mes && d.getDate() <= c1;
-        }).reduce((s, r) => s + r.valor, 0),
-        despesas: dfMes.filter((d) => d.diaVencimento <= c1).map((d) => {
-          const key = `${d.id}-${ano}-${mes}`;
-          const pg = pagamentos[key];
-          return { ...d, pago: pg?.pago || false, valorReal: pg?.valor ?? d.valor };
-        }),
-        despesasVar: dvMes.filter((d) => {
-          const dt = new Date(d.data + "T00:00:00");
-          return dt.getDate() <= c1;
-        }),
+        label: `Ciclo 1 — até dia ${c1}`,
+        receita: rec1,
+        despesas: dfAtivas.filter((d) => d.diaVencimento <= c1).map(mapD),
+        despesasVar: dvDoMes.filter((d) => new Date(d.data + "T00:00:00").getDate() <= c1),
       },
       {
-        label: `Até dia ${c2}`,
-        receita: receitasFixas.filter((r) => r.dia > c1 && r.dia <= c2).reduce((s, r) => {
-          const ini = new Date(r.dataInicio + "T00:00:00");
-          const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : null;
-          const mesRef = new Date(ano, mes - 1, 1);
-          if (ini <= new Date(ano, mes - 1, 28) && (!fim || fim >= mesRef)) return s + r.valor;
-          return s;
-        }, 0) + receitasAvulsas.filter((r) => {
-          const d = new Date(r.data + "T00:00:00");
-          return d.getFullYear() === ano && d.getMonth() + 1 === mes && d.getDate() > c1 && d.getDate() <= c2;
-        }).reduce((s, r) => s + r.valor, 0),
-        despesas: dfMes.filter((d) => d.diaVencimento > c1 && d.diaVencimento <= c2).map((d) => {
-          const key = `${d.id}-${ano}-${mes}`;
-          const pg = pagamentos[key];
-          return { ...d, pago: pg?.pago || false, valorReal: pg?.valor ?? d.valor };
-        }),
-        despesasVar: dvMes.filter((d) => {
-          const dt = new Date(d.data + "T00:00:00");
-          return dt.getDate() > c1 && dt.getDate() <= c2;
-        }),
+        label: `Ciclo 2 — após dia ${c1}`,
+        receita: rec2,
+        despesas: dfAtivas.filter((d) => d.diaVencimento > c1).map(mapD),
+        despesasVar: dvDoMes.filter((d) => new Date(d.data + "T00:00:00").getDate() > c1),
       },
     ];
+  }, [state, mesVis, dadosMes]);
 
-    // Saúde financeira (próximo mês)
-    const proximoAno = mes === 12 ? ano + 1 : ano;
-    const proximoMes = mes === 12 ? 1 : mes + 1;
-    const recFixProx = receitasFixas.reduce((s, r) => {
-      const ini = new Date(r.dataInicio + "T00:00:00");
-      const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : null;
-      const mesRef = new Date(proximoAno, proximoMes - 1, 1);
-      if (ini <= new Date(proximoAno, proximoMes - 1, 28) && (!fim || fim >= mesRef)) return s + r.valor;
-      return s;
-    }, 0);
-    const despFixProx = despesasFixas.reduce((s, d) => {
-      const ini = new Date(d.dataInicio + "T00:00:00");
-      const fim = d.dataFim ? new Date(d.dataFim + "T00:00:00") : null;
-      const mesRef = new Date(proximoAno, proximoMes - 1, 1);
-      if (ini <= new Date(proximoAno, proximoMes - 1, 28) && (!fim || fim >= mesRef)) return s + d.valor;
-      return s;
-    }, 0);
+  const saudeMes = useMemo(() => {
+    const prox = mesPosterior(mesVis.ano, mesVis.mes);
+    const recFixProx = state.receitasFixas.filter((r) => itemAtivoNoMes(r, prox.ano, prox.mes)).reduce((s, r) => s + r.valor, 0);
+    const despFixProx = state.despesasFixas.filter((d) => itemAtivoNoMes(d, prox.ano, prox.mes)).reduce((s, d) => s + d.valor, 0);
     const saldoProx = recFixProx - despFixProx;
-    const pctComprometido = recFixProx > 0 ? (despFixProx / recFixProx) * 100 : 100;
-    let saudeStatus = "ok";
-    if (pctComprometido >= 95) saudeStatus = "critico";
-    else if (pctComprometido >= 80) saudeStatus = "warn";
-    const saudeMes = { recFixProx, despFixProx, saldoProx, pctComprometido, status: saudeStatus };
+    const pct = recFixProx > 0 ? (despFixProx / recFixProx) * 100 : 100;
+    const status = pct >= 95 ? "critico" : pct >= 80 ? "warn" : "ok";
+    return { recFixProx, despFixProx, saldoProx, pct: Math.min(Math.round(pct), 100), status };
+  }, [state, mesVis]);
 
-    // Histórico 12 meses
-    const historico = [];
+  const historico = useMemo(() => {
+    const result = [];
     for (let i = 11; i >= 0; i--) {
-      let hAno = ano, hMes = mes - i;
+      let hAno = agora.ano, hMes = agora.mes - i;
       while (hMes <= 0) { hMes += 12; hAno--; }
-      const hRf = receitasFixas.reduce((s, r) => {
-        const ini = new Date(r.dataInicio + "T00:00:00");
-        const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : null;
-        const mesRef = new Date(hAno, hMes - 1, 1);
-        if (ini <= new Date(hAno, hMes - 1, 28) && (!fim || fim >= mesRef)) return s + r.valor;
-        return s;
-      }, 0);
-      const hRa = receitasAvulsas.filter((r) => {
-        const d = new Date(r.data + "T00:00:00");
-        return d.getFullYear() === hAno && d.getMonth() + 1 === hMes;
-      }).reduce((s, r) => s + r.valor, 0);
-      const hDf = despesasFixas.filter((d) => {
-        const ini = new Date(d.dataInicio + "T00:00:00");
-        const fim = d.dataFim ? new Date(d.dataFim + "T00:00:00") : null;
-        const mesRef = new Date(hAno, hMes - 1, 1);
-        return ini <= new Date(hAno, hMes - 1, 28) && (!fim || fim >= mesRef);
-      }).reduce((s, d) => {
-        const key = `${d.id}-${hAno}-${hMes}`;
-        const pg = pagamentos[key];
-        return s + (pg ? pg.valor : d.valor);
-      }, 0);
-      const hDv = despesasVariaveis.filter((d) => {
-        const dt = new Date(d.data + "T00:00:00");
-        return dt.getFullYear() === hAno && dt.getMonth() + 1 === hMes;
-      }).reduce((s, d) => s + d.valor, 0);
-      historico.push({
-        label: monthLabel(hAno, hMes),
-        receitas: hRf + hRa,
-        despesas: hDf + hDv,
-        saldo: (hRf + hRa) - (hDf + hDv),
-      });
+      const d = calcularMes(state, hAno, hMes);
+      result.push({ label: monthLabel(hAno, hMes), ...d });
     }
+    return result;
+  }, [state]);
 
-    return { totalReceitas, totalDespesas, saldo, cicloData, saudeMes, historico };
-  }, [state, mesAtual]);
-
-  // ─ Handlers ─
   const marcarPago = (despId, pago, valorAtual) => {
-    const { ano, mes } = mesAtual;
+    const { ano, mes } = mesVis;
     const key = `${despId}-${ano}-${mes}`;
-    update((s) => {
-      s.pagamentos = { ...s.pagamentos, [key]: { pago, valor: valorAtual } };
-    });
+    update((s) => { s.pagamentos = { ...s.pagamentos, [key]: { pago, valor: valorAtual } }; });
   };
 
   const editarValorPagamento = (despId, novoValor) => {
-    const { ano, mes } = mesAtual;
+    const { ano, mes } = mesVis;
     const key = `${despId}-${ano}-${mes}`;
     const current = state.pagamentos[key] || { pago: false };
-    update((s) => {
-      s.pagamentos = { ...s.pagamentos, [key]: { ...current, valor: parseFloat(novoValor) || 0 } };
-    });
+    update((s) => { s.pagamentos = { ...s.pagamentos, [key]: { ...current, valor: parseFloat(novoValor) || 0 } }; });
   };
 
   const excluir = (colecao, id) => {
     update((s) => { s[colecao] = s[colecao].filter((i) => i.id !== id); });
   };
 
+  const editar = (colecao, id, dados) => {
+    update((s) => { s[colecao] = s[colecao].map((i) => i.id === id ? { ...i, ...dados } : i); });
+  };
+
   const exportarCSV = () => {
-    const { ano, mes } = mesAtual;
+    const { ano, mes } = mesVis;
     const rows = [["Data","Nome","Categoria","Tipo","Valor","Status"]];
-    state.receitasFixas.forEach((r) => {
+    state.receitasFixas.filter((r) => itemAtivoNoMes(r, ano, mes)).forEach((r) => {
       rows.push([`${ano}-${String(mes).padStart(2,"0")}-${String(r.dia).padStart(2,"0")}`, r.nome, "Receita", "Fixa", r.valor.toFixed(2), "Recebida"]);
     });
     state.receitasAvulsas.filter((r) => {
@@ -662,17 +606,12 @@ export default function App() {
     }).forEach((r) => {
       rows.push([r.data, r.nome, "Receita", "Avulsa", r.valor.toFixed(2), "Recebida"]);
     });
-    state.despesasFixas.forEach((d) => {
+    dadosMes.dfAtivas.forEach((d) => {
       const key = `${d.id}-${ano}-${mes}`;
       const pg = state.pagamentos[key];
-      const valor = pg ? pg.valor : d.valor;
-      const status = pg?.pago ? "Pago" : "Pendente";
-      rows.push([`${ano}-${String(mes).padStart(2,"0")}-${String(d.diaVencimento).padStart(2,"0")}`, d.nome, CAT_MAP[d.categoria]?.label || d.categoria, "Fixa", valor.toFixed(2), status]);
+      rows.push([`${ano}-${String(mes).padStart(2,"0")}-${String(d.diaVencimento).padStart(2,"0")}`, d.nome, CAT_MAP[d.categoria]?.label || d.categoria, "Fixa", (pg?.valor ?? d.valor).toFixed(2), pg?.pago ? "Pago" : "Pendente"]);
     });
-    state.despesasVariaveis.filter((d) => {
-      const dt = new Date(d.data + "T00:00:00");
-      return dt.getFullYear() === ano && dt.getMonth() + 1 === mes;
-    }).forEach((d) => {
+    dadosMes.dvDoMes.forEach((d) => {
       rows.push([d.data, d.nome, CAT_MAP[d.categoria]?.label || d.categoria, "Variável", d.valor.toFixed(2), "Pago"]);
     });
     const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
@@ -683,82 +622,69 @@ export default function App() {
     a.click(); URL.revokeObjectURL(url);
   };
 
-  // ─ Render ─
   return (
     <>
       <style>{CSS}</style>
       <div className="app">
-        {/* Topbar */}
         <div className="topbar">
           <div>
             <div className="topbar-title">{state.config.nomeFamilia}</div>
-            <div className="topbar-sub">{monthLabel(mesAtual.ano, mesAtual.mes)}</div>
+            <div className="topbar-sub">
+              {monthLabel(mesVis.ano, mesVis.mes)}
+              {ehMesAtual  && " · mês atual"}
+              {ehMesFuturo && " · futuro"}
+              {ehMesPassado && " · encerrado"}
+            </div>
           </div>
           <div className="month-nav">
-            <button onClick={() => setMesAtual((m) => {
-              let mes = m.mes - 1, ano = m.ano;
-              if (mes <= 0) { mes = 12; ano--; }
-              return { ano, mes };
-            })}>‹</button>
-            <button onClick={() => {
-              const d = new Date();
-              setMesAtual({ ano: d.getFullYear(), mes: d.getMonth() + 1 });
-            }} style={{ fontSize: 12, padding: "4px 8px" }}>Hoje</button>
-            <button onClick={() => setMesAtual((m) => {
-              let mes = m.mes + 1, ano = m.ano;
-              if (mes > 12) { mes = 1; ano++; }
-              return { ano, mes };
-            })}>›</button>
+            <button onClick={() => setMesVis((m) => mesAnterior(m.ano, m.mes))}>‹</button>
+            {!ehMesAtual && (
+              <button className="mes-atual-btn" onClick={() => setMesVis(mesAtualReal())}>Mês atual</button>
+            )}
+            <button onClick={() => setMesVis((m) => mesPosterior(m.ano, m.mes))}>›</button>
           </div>
         </div>
 
-        {/* Content */}
         <div className="content">
-          {aba === "inicio" && <AbaInicio state={state} totalReceitas={totalReceitas} totalDespesas={totalDespesas} saldo={saldo} cicloData={cicloData} saudeMes={saudeMes} mesAtual={mesAtual} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} />}
-          {aba === "transacoes" && <AbaTransacoes state={state} mesAtual={mesAtual} excluir={excluir} exportarCSV={exportarCSV} setModal={setModal} />}
-          {aba === "historico" && <AbaHistorico historico={historico} />}
-          {aba === "config" && <AbaConfig state={state} update={update} setModal={setModal} excluir={excluir} />}
+          {aba === "inicio"     && <AbaInicio dadosMes={dadosMes} cicloData={cicloData} saudeMes={saudeMes} ehMesFuturo={ehMesFuturo} ehMesPassado={ehMesPassado} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} />}
+          {aba === "transacoes" && <AbaTransacoes state={state} mesVis={mesVis} dadosMes={dadosMes} excluir={excluir} setModal={setModal} exportarCSV={exportarCSV} />}
+          {aba === "historico"  && <AbaHistorico historico={historico} />}
+          {aba === "config"     && <AbaConfig state={state} update={update} setModal={setModal} excluir={excluir} editar={editar} />}
         </div>
 
-        {/* FAB */}
         {(aba === "inicio" || aba === "transacoes") && (
           <button className="fab" onClick={() => setModal({ tipo: "addLancamento" })}>+</button>
         )}
 
-        {/* Tab bar */}
         <div className="tabbar">
           {[
-            { id: "inicio",      label: "Início",     icon: <IconHome /> },
-            { id: "transacoes",  label: "Transações",  icon: <IconList /> },
-            { id: "historico",   label: "Histórico",   icon: <IconChart /> },
-            { id: "config",      label: "Ajustes",     icon: <IconGear /> },
+            { id: "inicio",     label: "Início",    icon: <IconHome /> },
+            { id: "transacoes", label: "Transações", icon: <IconList /> },
+            { id: "historico",  label: "Histórico",  icon: <IconChart /> },
+            { id: "config",     label: "Ajustes",    icon: <IconGear /> },
           ].map((t) => (
             <button key={t.id} className={`tab-btn${aba === t.id ? " active" : ""}`} onClick={() => setAba(t.id)}>
-              {t.icon}
-              {t.label}
+              {t.icon}{t.label}
             </button>
           ))}
         </div>
 
-        {/* Modals */}
-        {modal && (
-          <Modal modal={modal} setModal={setModal} state={state} update={update} mesAtual={mesAtual} />
-        )}
+        {modal && <Modal modal={modal} setModal={setModal} state={state} update={update} mesVis={mesVis} editar={editar} />}
       </div>
     </>
   );
 }
 
-// ─── Aba Início ──────────────────────────────────────────────────────────────
-function AbaInicio({ state, totalReceitas, totalDespesas, saldo, cicloData, saudeMes, mesAtual, marcarPago, editarValorPagamento }) {
-  const hoje = new Date();
-  const diaHoje = hoje.getDate();
-
+// ─── Aba Início ───────────────────────────────────────────────────────────────
+function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, marcarPago, editarValorPagamento }) {
+  const { totalReceitas, totalDespesas, saldo } = dadosMes;
   return (
     <>
-      {/* Hero saldo */}
+      {ehMesFuturo  && <div className="banner banner-futuro">📅 Mês futuro — valores baseados nas receitas e despesas fixas cadastradas</div>}
+      {ehMesPassado && <div className="banner banner-passado">🗂 Mês encerrado — histórico consolidado</div>}
+
       <div className="hero">
-        <div className="hero-label">SALDO DO MÊS</div>
+        <div className="hero-label">{ehMesFuturo ? "PROJEÇÃO DO MÊS" : "SALDO DO MÊS"}</div>
         <div className={`hero-value ${saldo >= 0 ? "pos" : "neg"}`}>{fmtBRL(saldo)}</div>
         <div className="hero-grid">
           <div className="hero-cell">
@@ -772,38 +698,32 @@ function AbaInicio({ state, totalReceitas, totalDespesas, saldo, cicloData, saud
         </div>
       </div>
 
-      {/* Saúde próximo mês */}
-      <div className="sec-title">Saúde do Próximo Mês</div>
-      <SaudeCard saudeMes={saudeMes} />
+      {!ehMesPassado && (
+        <>
+          <div className="sec-title">Saúde do Próximo Mês</div>
+          <SaudeCard saudeMes={saudeMes} />
+        </>
+      )}
 
-      {/* Ciclos */}
       <div className="sec-title">Ciclos de Pagamento</div>
       {cicloData.map((ciclo, i) => (
-        <CicloCard key={i} ciclo={ciclo} diaHoje={diaHoje} mesAtual={mesAtual} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} state={state} />
+        <CicloCard key={i} ciclo={ciclo} ehMesFuturo={ehMesFuturo} marcarPago={marcarPago} editarValorPagamento={editarValorPagamento} />
       ))}
     </>
   );
 }
 
 function SaudeCard({ saudeMes }) {
-  const { recFixProx, despFixProx, saldoProx, pctComprometido, status } = saudeMes;
+  const { recFixProx, despFixProx, saldoProx, pct, status } = saudeMes;
   const label = status === "ok" ? "Folgado" : status === "warn" ? "Apertado" : "Sobrecarregado";
-  const badgeClass = status === "ok" ? "saude-ok" : status === "warn" ? "saude-warn" : "saude-critico";
   const emoji = status === "ok" ? "✓" : status === "warn" ? "⚠" : "✕";
-  const pct = Math.min(Math.round(pctComprometido), 100);
   const barColor = status === "ok" ? "var(--green)" : status === "warn" ? "var(--yellow)" : "var(--red)";
-
   return (
     <div className="card">
-      <span className={`saude-badge ${badgeClass}`}>{emoji} {label}</span>
+      <span className={`saude-badge saude-${status}`}>{emoji} {label}</span>
       <div className="progress-wrap">
-        <div className="progress-row">
-          <span>Comprometido</span>
-          <span>{pct}%</span>
-        </div>
-        <div className="progress-bar">
-          <div className="progress-fill" style={{ width: `${pct}%`, background: barColor }} />
-        </div>
+        <div className="progress-row"><span>Comprometido</span><span>{pct}%</span></div>
+        <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: barColor }} /></div>
       </div>
       <div className="stat-row">
         <span className="stat-label">Receitas previstas</span>
@@ -821,26 +741,24 @@ function SaudeCard({ saudeMes }) {
   );
 }
 
-function CicloCard({ ciclo, diaHoje, mesAtual, marcarPago, editarValorPagamento, state }) {
+function CicloCard({ ciclo, ehMesFuturo, marcarPago, editarValorPagamento }) {
   const totalFixas = ciclo.despesas.reduce((s, d) => s + d.valorReal, 0);
   const totalVar   = ciclo.despesasVar.reduce((s, d) => s + d.valor, 0);
   const totalDesp  = totalFixas + totalVar;
-  const pagas      = ciclo.despesas.filter((d) => d.pago).reduce((s, d) => s + d.valorReal, 0);
-  const pendentes  = totalFixas - pagas;
   const saldoCiclo = ciclo.receita - totalDesp;
-  const pct        = ciclo.receita > 0 ? Math.min(Math.round((totalDesp / ciclo.receita) * 100), 100) : 0;
-  const barColor   = pct < 70 ? "var(--green)" : pct < 90 ? "var(--yellow)" : "var(--red)";
+  const pct = ciclo.receita > 0 ? Math.min(Math.round((totalDesp / ciclo.receita) * 100), 100) : 0;
+  const barColor = pct < 70 ? "var(--green)" : pct < 90 ? "var(--yellow)" : "var(--red)";
   const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="ciclo-card" style={{ background: "var(--bg2)" }}>
-      <div className="ciclo-header" onClick={() => setExpanded((e) => !e)} style={{ cursor: "pointer" }}>
+    <div className="ciclo-card">
+      <div className="ciclo-header" onClick={() => setExpanded((e) => !e)}>
         <div>
           <div className="ciclo-title">{ciclo.label}</div>
           <div className="ciclo-sub">{ciclo.despesas.length} fixas · {ciclo.despesasVar.length} variáveis</div>
         </div>
         <div>
-          <div className={`ciclo-saldo`} style={{ color: saldoCiclo >= 0 ? "var(--green)" : "var(--red)" }}>{fmtBRL(saldoCiclo)}</div>
+          <div className="ciclo-saldo" style={{ color: saldoCiclo >= 0 ? "var(--green)" : "var(--red)" }}>{fmtBRL(saldoCiclo)}</div>
           <div className="ciclo-saldo-label">saldo do ciclo</div>
         </div>
       </div>
@@ -859,36 +777,31 @@ function CicloCard({ ciclo, diaHoje, mesAtual, marcarPago, editarValorPagamento,
         <>
           {ciclo.despesas.length > 0 && (
             <>
-              <div style={{ fontSize: 11, color: "var(--text3)", fontWeight: 600, letterSpacing: "0.5px", marginBottom: 6 }}>DESPESAS FIXAS</div>
+              <div className="sub-label">DESPESAS FIXAS</div>
               {ciclo.despesas.map((d) => {
                 const cat = CAT_MAP[d.categoria];
                 return (
                   <div key={d.id} className="tx-row">
-                    <button
-                      className={`check-btn${d.pago ? " checked" : ""}`}
-                      onClick={() => marcarPago(d.id, !d.pago, d.valorReal)}
-                    >
-                      {d.pago && <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 5L4 7.5L8.5 2.5" stroke="#fff" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-                    </button>
-                    <div className="tx-icon" style={{ background: `${CAT_CORES[d.categoria]}18` }}>
-                      {cat?.icon || "📦"}
-                    </div>
+                    {!ehMesFuturo && (
+                      <button className={`check-btn${d.pago ? " checked" : ""}`} onClick={() => marcarPago(d.id, !d.pago, d.valorReal)}>
+                        {d.pago && <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 5L4 7.5L8.5 2.5" stroke="#fff" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                      </button>
+                    )}
+                    <div className="tx-icon" style={{ background: `${CAT_CORES[d.categoria]}18` }}>{cat?.icon || "📦"}</div>
                     <div className="tx-info">
                       <div className="tx-name" style={{ textDecoration: d.pago ? "line-through" : "none", color: d.pago ? "var(--text2)" : "var(--text)" }}>{d.nome}</div>
-                      <div className="tx-meta">Vence dia {d.diaVencimento} · {d.valorVariavel ? "valor variável" : "fixo"}</div>
+                      <div className="tx-meta">Vence dia {d.diaVencimento}{d.valorVariavel ? " · valor variável" : ""}</div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                      {d.valorVariavel && !d.pago ? (
-                        <input
-                          type="number"
-                          value={d.valorReal}
-                          onChange={(e) => editarValorPagamento(d.id, e.target.value)}
-                          style={{ width: 90, background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: 6, padding: "3px 6px", color: "var(--text)", fontFamily: "var(--mono)", fontSize: 13, textAlign: "right" }}
-                        />
+                      {d.valorVariavel && !d.pago && !ehMesFuturo ? (
+                        <input type="number" value={d.valorReal} onChange={(e) => editarValorPagamento(d.id, e.target.value)}
+                          style={{ width: 90, background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: 6, padding: "3px 6px", color: "var(--text)", fontFamily: "var(--mono)", fontSize: 13, textAlign: "right" }} />
                       ) : (
                         <span className="tx-val neg">{fmtBRL(d.valorReal)}</span>
                       )}
-                      <span className={`pill ${d.pago ? "pill-pago" : "pill-pendente"}`}>{d.pago ? "Pago" : "Pendente"}</span>
+                      <span className={`pill ${ehMesFuturo ? "pill-futuro" : d.pago ? "pill-pago" : "pill-pendente"}`}>
+                        {ehMesFuturo ? "Previsto" : d.pago ? "Pago" : "Pendente"}
+                      </span>
                     </div>
                   </div>
                 );
@@ -898,14 +811,12 @@ function CicloCard({ ciclo, diaHoje, mesAtual, marcarPago, editarValorPagamento,
 
           {ciclo.despesasVar.length > 0 && (
             <>
-              <div style={{ fontSize: 11, color: "var(--text3)", fontWeight: 600, letterSpacing: "0.5px", margin: "12px 0 6px" }}>DESPESAS VARIÁVEIS</div>
+              <div className="sub-label" style={{ marginTop: 12 }}>DESPESAS VARIÁVEIS</div>
               {ciclo.despesasVar.map((d) => {
                 const cat = CAT_MAP[d.categoria];
                 return (
                   <div key={d.id} className="tx-row">
-                    <div className="tx-icon" style={{ background: `${CAT_CORES[d.categoria] || "#6b7280"}18` }}>
-                      {cat?.icon || "📦"}
-                    </div>
+                    <div className="tx-icon" style={{ background: `${CAT_CORES[d.categoria] || "#6b7280"}18` }}>{cat?.icon || "📦"}</div>
                     <div className="tx-info">
                       <div className="tx-name">{d.nome}</div>
                       <div className="tx-meta">{d.data} · {cat?.label}</div>
@@ -927,29 +838,14 @@ function CicloCard({ ciclo, diaHoje, mesAtual, marcarPago, editarValorPagamento,
 }
 
 // ─── Aba Transações ───────────────────────────────────────────────────────────
-function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
-  const { ano, mes } = mesAtual;
+function AbaTransacoes({ state, mesVis, dadosMes, excluir, setModal, exportarCSV }) {
+  const { ano, mes } = mesVis;
   const [filtro, setFiltro] = useState("todos");
 
-  const recFixMes = state.receitasFixas.filter((r) => {
-    const ini = new Date(r.dataInicio + "T00:00:00");
-    const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : null;
-    const mesRef = new Date(ano, mes - 1, 1);
-    return ini <= new Date(ano, mes - 1, 28) && (!fim || fim >= mesRef);
-  });
-  const recAvMes = state.receitasAvulsas.filter((r) => {
+  const recFixMes = state.receitasFixas.filter((r) => itemAtivoNoMes(r, ano, mes));
+  const recAvMes  = state.receitasAvulsas.filter((r) => {
     const d = new Date(r.data + "T00:00:00");
     return d.getFullYear() === ano && d.getMonth() + 1 === mes;
-  });
-  const despFixMes = state.despesasFixas.filter((d) => {
-    const ini = new Date(d.dataInicio + "T00:00:00");
-    const fim = d.dataFim ? new Date(d.dataFim + "T00:00:00") : null;
-    const mesRef = new Date(ano, mes - 1, 1);
-    return ini <= new Date(ano, mes - 1, 28) && (!fim || fim >= mesRef);
-  });
-  const despVarMes = state.despesasVariaveis.filter((d) => {
-    const dt = new Date(d.data + "T00:00:00");
-    return dt.getFullYear() === ano && dt.getMonth() + 1 === mes;
   });
 
   return (
@@ -961,9 +857,7 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
             {f === "todos" ? "Todos" : f === "receitas" ? "Receitas" : "Despesas"}
           </button>
         ))}
-        <button className="btn btn-sm btn-ghost" onClick={exportarCSV} style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
-          ↓ CSV
-        </button>
+        <button className="btn btn-sm btn-ghost" onClick={exportarCSV} style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>↓ CSV</button>
       </div>
 
       {(filtro === "todos" || filtro === "receitas") && (
@@ -979,6 +873,7 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
                   <div className="tx-meta">Fixa · Dia {r.dia}</div>
                 </div>
                 <span className="tx-val pos">{fmtBRL(r.valor)}</span>
+                <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editReceita", subtipo: "fixa", item: r })}>✎</button>
               </div>
             ))}
             {recAvMes.map((r) => (
@@ -988,10 +883,9 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
                   <div className="tx-name">{r.nome}</div>
                   <div className="tx-meta">Avulsa · {r.data}</div>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                  <span className="tx-val pos">{fmtBRL(r.valor)}</span>
-                  <button className="btn btn-danger btn-sm" onClick={() => excluir("receitasAvulsas", r.id)}>✕</button>
-                </div>
+                <span className="tx-val pos">{fmtBRL(r.valor)}</span>
+                <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editReceita", subtipo: "avulsa", item: r })}>✎</button>
+                <button className="btn btn-danger btn-sm btn-icon" title="Excluir" onClick={() => excluir("receitasAvulsas", r.id)}>✕</button>
               </div>
             ))}
           </div>
@@ -1002,8 +896,8 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
         <>
           <div className="sec-title">Despesas Fixas</div>
           <div className="card" style={{ padding: "8px 14px" }}>
-            {despFixMes.length === 0 && <div className="empty">Nenhuma despesa fixa</div>}
-            {despFixMes.map((d) => {
+            {dadosMes.dfAtivas.length === 0 && <div className="empty">Nenhuma despesa fixa</div>}
+            {dadosMes.dfAtivas.map((d) => {
               const cat = CAT_MAP[d.categoria];
               const key = `${d.id}-${ano}-${mes}`;
               const pg = state.pagamentos[key];
@@ -1014,10 +908,11 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
                     <div className="tx-name">{d.nome}</div>
                     <div className="tx-meta">{cat?.label} · Dia {d.diaVencimento}{d.dataFim ? ` · até ${d.dataFim}` : ""}</div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
                     <span className="tx-val neg">{fmtBRL(pg?.valor ?? d.valor)}</span>
                     <span className={`pill ${pg?.pago ? "pill-pago" : "pill-pendente"}`}>{pg?.pago ? "Pago" : "Pendente"}</span>
                   </div>
+                  <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editDespesaFixa", item: d })}>✎</button>
                 </div>
               );
             })}
@@ -1025,8 +920,8 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
 
           <div className="sec-title">Despesas Variáveis</div>
           <div className="card" style={{ padding: "8px 14px" }}>
-            {despVarMes.length === 0 && <div className="empty">Nenhuma despesa variável</div>}
-            {despVarMes.map((d) => {
+            {dadosMes.dvDoMes.length === 0 && <div className="empty">Nenhuma despesa variável</div>}
+            {dadosMes.dvDoMes.map((d) => {
               const cat = CAT_MAP[d.categoria];
               return (
                 <div key={d.id} className="tx-row">
@@ -1035,10 +930,9 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
                     <div className="tx-name">{d.nome}</div>
                     <div className="tx-meta">{cat?.label} · {d.data}</div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                    <span className="tx-val neg">{fmtBRL(d.valor)}</span>
-                    <button className="btn btn-danger btn-sm" onClick={() => excluir("despesasVariaveis", d.id)}>✕</button>
-                  </div>
+                  <span className="tx-val neg">{fmtBRL(d.valor)}</span>
+                  <button className="btn btn-edit btn-sm btn-icon" title="Editar" onClick={() => setModal({ tipo: "editDespesaVar", item: d })}>✎</button>
+                  <button className="btn btn-danger btn-sm btn-icon" title="Excluir" onClick={() => excluir("despesasVariaveis", d.id)}>✕</button>
                 </div>
               );
             })}
@@ -1051,7 +945,8 @@ function AbaTransacoes({ state, mesAtual, excluir, exportarCSV, setModal }) {
 
 // ─── Aba Histórico ────────────────────────────────────────────────────────────
 function AbaHistorico({ historico }) {
-  const maxVal = Math.max(...historico.map((h) => Math.max(h.receitas, h.despesas)), 1);
+  const comDados = historico.filter((h) => !h.ehFuturo);
+  const maxVal = Math.max(...comDados.map((h) => Math.max(h.totalReceitas, h.totalDespesas)), 1);
 
   return (
     <>
@@ -1068,28 +963,33 @@ function AbaHistorico({ historico }) {
         <div className="chart-wrap">
           {historico.map((h, i) => (
             <div key={i} className="chart-bar-group">
-              <div className="chart-bar" style={{ height: `${Math.round((h.receitas / maxVal) * 100)}%`, background: "var(--green)", opacity: 0.7 }} />
-              <div className="chart-bar" style={{ height: `${Math.round((h.despesas / maxVal) * 100)}%`, background: "var(--red)", opacity: 0.7 }} />
+              <div className="chart-bar" style={{
+                height: h.ehFuturo ? "3px" : `${Math.round((h.totalReceitas / maxVal) * 100)}%`,
+                background: "var(--green)", opacity: h.ehFuturo ? 0.15 : 0.75
+              }} />
+              <div className="chart-bar" style={{
+                height: h.ehFuturo ? "3px" : `${Math.round((h.totalDespesas / maxVal) * 100)}%`,
+                background: "var(--red)", opacity: h.ehFuturo ? 0.15 : 0.75
+              }} />
             </div>
           ))}
         </div>
         <div className="chart-labels">
-          {historico.map((h, i) => (
-            <div key={i} className="chart-label">{h.label}</div>
-          ))}
+          {historico.map((h, i) => <div key={i} className="chart-label">{h.label}</div>)}
         </div>
       </div>
 
       <div className="sec-title">Detalhamento</div>
-      {[...historico].reverse().map((h, i) => (
+      {comDados.length === 0 && <div className="empty">Nenhum dado ainda — cadastre suas receitas e despesas</div>}
+      {[...comDados].reverse().map((h, i) => (
         <div key={i} className="card-sm">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span style={{ fontWeight: 600, fontSize: 14 }}>{h.label}</span>
             <span style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 15, color: h.saldo >= 0 ? "var(--green)" : "var(--red)" }}>{fmtBRL(h.saldo)}</span>
           </div>
           <div style={{ display: "flex", gap: 16 }}>
-            <span style={{ fontSize: 12, color: "var(--green)" }}>↑ {fmtBRL(h.receitas)}</span>
-            <span style={{ fontSize: 12, color: "var(--red)" }}>↓ {fmtBRL(h.despesas)}</span>
+            <span style={{ fontSize: 12, color: "var(--green)" }}>↑ {fmtBRL(h.totalReceitas)}</span>
+            <span style={{ fontSize: 12, color: "var(--red)" }}>↓ {fmtBRL(h.totalDespesas)}</span>
           </div>
         </div>
       ))}
@@ -1098,7 +998,7 @@ function AbaHistorico({ historico }) {
 }
 
 // ─── Aba Config ───────────────────────────────────────────────────────────────
-function AbaConfig({ state, update, setModal, excluir }) {
+function AbaConfig({ state, update, setModal, excluir, editar }) {
   return (
     <>
       <div className="sec-title">Configurações Gerais</div>
@@ -1109,39 +1009,45 @@ function AbaConfig({ state, update, setModal, excluir }) {
         </div>
         <div className="field-row">
           <div className="field">
-            <label>Ciclo 1 — dia</label>
-            <input type="number" min="1" max="28" value={state.config.ciclo1} onChange={(e) => update((s) => { s.config.ciclo1 = parseInt(e.target.value) || 15; })} />
+            <label>Ciclo 1 — até o dia</label>
+            <input type="number" min="1" max="28" value={state.config.ciclo1}
+              onChange={(e) => update((s) => { s.config.ciclo1 = parseInt(e.target.value) || 15; })} />
           </div>
           <div className="field">
-            <label>Ciclo 2 — dia</label>
-            <input type="number" min="1" max="31" value={state.config.ciclo2} onChange={(e) => update((s) => { s.config.ciclo2 = parseInt(e.target.value) || 30; })} />
+            <label>Ciclo 2 — até o dia</label>
+            <input type="number" min="1" max="31" value={state.config.ciclo2}
+              onChange={(e) => update((s) => { s.config.ciclo2 = parseInt(e.target.value) || 30; })} />
           </div>
         </div>
       </div>
 
       <div className="sec-title">Receitas Fixas</div>
+      {state.receitasFixas.length === 0 && <div className="empty" style={{ padding: "12px 0" }}>Nenhuma receita fixa cadastrada</div>}
       {state.receitasFixas.map((r) => (
         <div key={r.id} className="card-sm" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 500, fontSize: 13 }}>{r.nome}</div>
             <div style={{ fontSize: 11, color: "var(--text2)" }}>Dia {r.dia} · {fmtBRL(r.valor)}</div>
           </div>
-          <button className="btn btn-danger btn-sm" onClick={() => excluir("receitasFixas", r.id)}>✕</button>
+          <button className="btn btn-edit btn-sm btn-icon" onClick={() => setModal({ tipo: "editReceita", subtipo: "fixa", item: r })}>✎</button>
+          <button className="btn btn-danger btn-sm btn-icon" onClick={() => excluir("receitasFixas", r.id)}>✕</button>
         </div>
       ))}
       <button className="btn btn-ghost btn-full" style={{ marginBottom: 4 }} onClick={() => setModal({ tipo: "addReceita", subtipo: "fixa" })}>+ Receita fixa</button>
 
       <div className="sec-title">Despesas Fixas Cadastradas</div>
+      {state.despesasFixas.length === 0 && <div className="empty" style={{ padding: "12px 0" }}>Nenhuma despesa fixa cadastrada</div>}
       {state.despesasFixas.map((d) => {
         const cat = CAT_MAP[d.categoria];
         return (
           <div key={d.id} className="card-sm" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div className="tx-icon" style={{ background: `${CAT_CORES[d.categoria]}18`, width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>{cat?.icon || "📦"}</div>
+            <div className="tx-icon" style={{ background: `${CAT_CORES[d.categoria]}18`, width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{cat?.icon || "📦"}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 500, fontSize: 13 }}>{d.nome}</div>
               <div style={{ fontSize: 11, color: "var(--text2)" }}>Dia {d.diaVencimento} · {fmtBRL(d.valor)}{d.valorVariavel ? " (variável)" : ""}{d.dataFim ? ` · até ${d.dataFim}` : ""}</div>
             </div>
-            <button className="btn btn-danger btn-sm" onClick={() => excluir("despesasFixas", d.id)}>✕</button>
+            <button className="btn btn-edit btn-sm btn-icon" onClick={() => setModal({ tipo: "editDespesaFixa", item: d })}>✎</button>
+            <button className="btn btn-danger btn-sm btn-icon" onClick={() => excluir("despesasFixas", d.id)}>✕</button>
           </div>
         );
       })}
@@ -1150,8 +1056,8 @@ function AbaConfig({ state, update, setModal, excluir }) {
   );
 }
 
-// ─── Modal ────────────────────────────────────────────────────────────────────
-function Modal({ modal, setModal, state, update, mesAtual }) {
+// ─── Modais ───────────────────────────────────────────────────────────────────
+function Modal({ modal, setModal, state, update, mesVis, editar }) {
   const fechar = () => setModal(null);
 
   if (modal.tipo === "addLancamento") {
@@ -1177,35 +1083,36 @@ function Modal({ modal, setModal, state, update, mesAtual }) {
     );
   }
 
-  if (modal.tipo === "addDespesaVar") {
-    return <ModalDespesaVar fechar={fechar} update={update} mesAtual={mesAtual} />;
-  }
-
-  if (modal.tipo === "addDespesaFixa") {
-    return <ModalDespesaFixa fechar={fechar} update={update} />;
-  }
-
-  if (modal.tipo === "addReceita") {
-    return <ModalReceita fechar={fechar} update={update} subtipo={modal.subtipo} mesAtual={mesAtual} />;
-  }
+  if (modal.tipo === "addDespesaVar" || modal.tipo === "editDespesaVar")
+    return <ModalDespesaVar fechar={fechar} update={update} editar={editar} item={modal.item} />;
+  if (modal.tipo === "addDespesaFixa" || modal.tipo === "editDespesaFixa")
+    return <ModalDespesaFixa fechar={fechar} update={update} editar={editar} item={modal.item} />;
+  if (modal.tipo === "addReceita" || modal.tipo === "editReceita")
+    return <ModalReceita fechar={fechar} update={update} editar={editar} subtipo={modal.subtipo} item={modal.item} />;
 
   return null;
 }
 
-function ModalDespesaVar({ fechar, update, mesAtual }) {
-  const [form, setForm] = useState({ nome: "", categoria: "alimentacao", valor: "", data: today() });
+function ModalDespesaVar({ fechar, update, editar, item }) {
+  const isEdit = !!item;
+  const [form, setForm] = useState({
+    nome: item?.nome || "",
+    categoria: item?.categoria || "alimentacao",
+    valor: item?.valor?.toString() || "",
+    data: item?.data || todayStr(),
+  });
   const f = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
   const salvar = () => {
     if (!form.nome || !form.valor) return;
-    update((s) => {
-      s.despesasVariaveis = [...s.despesasVariaveis, { id: uid(), ...form, valor: parseFloat(form.valor) }];
-    });
+    const dados = { ...form, valor: parseFloat(form.valor) };
+    if (isEdit) editar("despesasVariaveis", item.id, dados);
+    else update((s) => { s.despesasVariaveis = [...s.despesasVariaveis, { id: uid(), ...dados }]; });
     fechar();
   };
   return (
     <div className="modal-overlay" onClick={fechar}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">Despesa Variável <button className="btn btn-ghost btn-sm btn-icon" onClick={fechar}>✕</button></div>
+        <div className="modal-title">{isEdit ? "Editar" : "Nova"} Despesa Variável <button className="btn btn-ghost btn-sm btn-icon" onClick={fechar}>✕</button></div>
         <div className="field"><label>Nome</label><input placeholder="Ex: Farmácia" value={form.nome} onChange={f("nome")} /></div>
         <div className="field-row">
           <div className="field"><label>Valor (R$)</label><input type="number" placeholder="0,00" value={form.valor} onChange={f("valor")} /></div>
@@ -1217,35 +1124,41 @@ function ModalDespesaVar({ fechar, update, mesAtual }) {
             {CATEGORIAS.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
           </select>
         </div>
-        <button className="btn btn-primary btn-full" onClick={salvar}>Salvar</button>
+        <button className="btn btn-primary btn-full" onClick={salvar}>{isEdit ? "Salvar alterações" : "Adicionar"}</button>
       </div>
     </div>
   );
 }
 
-function ModalDespesaFixa({ fechar, update }) {
-  const [form, setForm] = useState({ nome: "", categoria: "moradia", valor: "", diaVencimento: "", dataInicio: today().slice(0, 7) + "-01", dataFim: "", valorVariavel: false, temFim: false });
+function ModalDespesaFixa({ fechar, update, editar, item }) {
+  const isEdit = !!item;
+  const [form, setForm] = useState({
+    nome: item?.nome || "",
+    categoria: item?.categoria || "moradia",
+    valor: item?.valor?.toString() || "",
+    diaVencimento: item?.diaVencimento?.toString() || "",
+    dataInicio: item?.dataInicio || todayStr().slice(0, 7) + "-01",
+    dataFim: item?.dataFim || "",
+    valorVariavel: item?.valorVariavel || false,
+    temFim: !!item?.dataFim,
+  });
   const f = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
   const salvar = () => {
     if (!form.nome || !form.valor || !form.diaVencimento) return;
-    update((s) => {
-      s.despesasFixas = [...s.despesasFixas, {
-        id: uid(),
-        nome: form.nome,
-        categoria: form.categoria,
-        valor: parseFloat(form.valor),
-        diaVencimento: parseInt(form.diaVencimento),
-        dataInicio: form.dataInicio,
-        dataFim: form.temFim ? form.dataFim : null,
-        valorVariavel: form.valorVariavel,
-      }];
-    });
+    const dados = {
+      nome: form.nome, categoria: form.categoria,
+      valor: parseFloat(form.valor), diaVencimento: parseInt(form.diaVencimento),
+      dataInicio: form.dataInicio, dataFim: form.temFim ? form.dataFim : null,
+      valorVariavel: form.valorVariavel,
+    };
+    if (isEdit) editar("despesasFixas", item.id, dados);
+    else update((s) => { s.despesasFixas = [...s.despesasFixas, { id: uid(), ...dados }]; });
     fechar();
   };
   return (
     <div className="modal-overlay" onClick={fechar}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">Despesa Fixa <button className="btn btn-ghost btn-sm btn-icon" onClick={fechar}>✕</button></div>
+        <div className="modal-title">{isEdit ? "Editar" : "Nova"} Despesa Fixa <button className="btn btn-ghost btn-sm btn-icon" onClick={fechar}>✕</button></div>
         <div className="field"><label>Nome</label><input placeholder="Ex: Conta de Luz" value={form.nome} onChange={f("nome")} /></div>
         <div className="field-row">
           <div className="field"><label>Valor padrão (R$)</label><input type="number" placeholder="0,00" value={form.valor} onChange={f("valor")} /></div>
@@ -1267,32 +1180,41 @@ function ModalDespesaFixa({ fechar, update }) {
           <label>Valor varia todo mês (ex: luz, água)?</label>
           <div className={`toggle${form.valorVariavel ? " on" : ""}`} onClick={() => setForm((p) => ({ ...p, valorVariavel: !p.valorVariavel }))} />
         </div>
-        <button className="btn btn-primary btn-full" onClick={salvar}>Salvar</button>
+        <button className="btn btn-primary btn-full" onClick={salvar}>{isEdit ? "Salvar alterações" : "Adicionar"}</button>
       </div>
     </div>
   );
 }
 
-function ModalReceita({ fechar, update, subtipo, mesAtual }) {
-  const [form, setForm] = useState({ nome: "", valor: "", dia: "", data: today(), dataInicio: today().slice(0, 7) + "-01", dataFim: "", temFim: false });
+function ModalReceita({ fechar, update, editar, subtipo, item }) {
+  const isEdit = !!item;
+  const [form, setForm] = useState({
+    nome: item?.nome || "",
+    valor: item?.valor?.toString() || "",
+    dia: item?.dia?.toString() || "",
+    data: item?.data || todayStr(),
+    dataInicio: item?.dataInicio || todayStr().slice(0, 7) + "-01",
+    dataFim: item?.dataFim || "",
+    temFim: !!item?.dataFim,
+  });
   const f = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
   const salvar = () => {
     if (!form.nome || !form.valor) return;
     if (subtipo === "fixa") {
-      update((s) => {
-        s.receitasFixas = [...s.receitasFixas, { id: uid(), nome: form.nome, valor: parseFloat(form.valor), dia: parseInt(form.dia) || 1, dataInicio: form.dataInicio, dataFim: form.temFim ? form.dataFim : null }];
-      });
+      const dados = { nome: form.nome, valor: parseFloat(form.valor), dia: parseInt(form.dia) || 1, dataInicio: form.dataInicio, dataFim: form.temFim ? form.dataFim : null };
+      if (isEdit) editar("receitasFixas", item.id, dados);
+      else update((s) => { s.receitasFixas = [...s.receitasFixas, { id: uid(), ...dados }]; });
     } else {
-      update((s) => {
-        s.receitasAvulsas = [...s.receitasAvulsas, { id: uid(), nome: form.nome, valor: parseFloat(form.valor), data: form.data }];
-      });
+      const dados = { nome: form.nome, valor: parseFloat(form.valor), data: form.data };
+      if (isEdit) editar("receitasAvulsas", item.id, dados);
+      else update((s) => { s.receitasAvulsas = [...s.receitasAvulsas, { id: uid(), ...dados }]; });
     }
     fechar();
   };
   return (
     <div className="modal-overlay" onClick={fechar}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">{subtipo === "fixa" ? "Receita Fixa" : "Receita Avulsa"} <button className="btn btn-ghost btn-sm btn-icon" onClick={fechar}>✕</button></div>
+        <div className="modal-title">{isEdit ? "Editar" : "Nova"} {subtipo === "fixa" ? "Receita Fixa" : "Receita Avulsa"} <button className="btn btn-ghost btn-sm btn-icon" onClick={fechar}>✕</button></div>
         <div className="field"><label>Nome</label><input placeholder={subtipo === "fixa" ? "Ex: Salário" : "Ex: Freela"} value={form.nome} onChange={f("nome")} /></div>
         <div className="field-row">
           <div className="field"><label>Valor (R$)</label><input type="number" placeholder="0,00" value={form.valor} onChange={f("valor")} /></div>
@@ -1311,7 +1233,7 @@ function ModalReceita({ fechar, update, subtipo, mesAtual }) {
             {form.temFim && <div className="field"><label>Data término</label><input type="date" value={form.dataFim} onChange={f("dataFim")} /></div>}
           </>
         )}
-        <button className="btn btn-primary btn-full" onClick={salvar}>Salvar</button>
+        <button className="btn btn-primary btn-full" onClick={salvar}>{isEdit ? "Salvar alterações" : "Adicionar"}</button>
       </div>
     </div>
   );
