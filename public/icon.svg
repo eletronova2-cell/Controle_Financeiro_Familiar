@@ -1,9 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#0f1117"/>
-  <rect x="80" y="160" width="352" height="220" rx="24" fill="none" stroke="#6366f1" stroke-width="20"/>
-  <path d="M80 220 L432 220" stroke="#6366f1" stroke-width="16"/>
-  <circle cx="180" cy="300" r="24" fill="#34d399"/>
-  <rect x="230" y="284" width="140" height="14" rx="7" fill="#22263a"/>
-  <rect x="230" y="308" width="90" height="10" rx="5" fill="#22263a"/>
-  <path d="M340 120 L340 80 M340 80 L310 110 M340 80 L370 110" stroke="#fbbf24" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Fundo arredondado índigo -->
+  <rect width="512" height="512" rx="110" fill="#1a1d27"/>
+  <!-- Círculo de fundo do símbolo -->
+  <circle cx="256" cy="256" r="170" fill="#6366f1" opacity="0.15"/>
+  <!-- Símbolo R$ centralizado -->
+  <text x="256" y="310" text-anchor="middle" font-family="'DM Mono', 'Courier New', monospace" font-size="200" font-weight="700" fill="#6366f1">R$</text>
+  <!-- Barra verde embaixo -->
+  <rect x="110" y="390" width="292" height="18" rx="9" fill="#34d399" opacity="0.8"/>
 </svg>
