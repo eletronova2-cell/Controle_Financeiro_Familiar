@@ -106,7 +106,10 @@ function calcularMes(state, ano, mes) {
   const totalRA = raDoMes.reduce((s, r) => s + r.valor, 0);
 
   const dfAtivas = state.despesasFixas.filter((d) => itemAtivoNoMes(d, ano, mes));
-  const totalDF = ehFuturo ? 0 : dfAtivas.reduce((s, d) => {
+
+  // Meses futuros: usa valor padrão das fixas (sem pagamentos reais ainda)
+  const totalDF = dfAtivas.reduce((s, d) => {
+    if (ehFuturo) return s + d.valor;
     const key = `${d.id}-${ano}-${mes}`;
     const pg = state.pagamentos[key];
     return s + (pg ? pg.valor : d.valor);
@@ -119,7 +122,8 @@ function calcularMes(state, ano, mes) {
   const totalDV = dvDoMes.reduce((s, d) => s + d.valor, 0);
 
   const totalReceitas = totalRF + totalRA;
-  const totalDespesas = ehFuturo ? 0 : totalDF + totalDV;
+  // Meses futuros: despesas variáveis são zero (ainda não ocorreram)
+  const totalDespesas = ehFuturo ? totalDF : totalDF + totalDV;
 
   return {
     totalReceitas: ehFuturo ? totalRF : totalReceitas,
@@ -568,12 +572,50 @@ export default function App() {
 
   const saudeMes = useMemo(() => {
     const prox = mesPosterior(mesVis.ano, mesVis.mes);
-    const recFixProx = state.receitasFixas.filter((r) => itemAtivoNoMes(r, prox.ano, prox.mes)).reduce((s, r) => s + r.valor, 0);
-    const despFixProx = state.despesasFixas.filter((d) => itemAtivoNoMes(d, prox.ano, prox.mes)).reduce((s, d) => s + d.valor, 0);
-    const saldoProx = recFixProx - despFixProx;
-    const pct = recFixProx > 0 ? (despFixProx / recFixProx) * 100 : 100;
+
+    // Receitas fixas do próximo mês
+    const recFixProx = state.receitasFixas
+      .filter((r) => itemAtivoNoMes(r, prox.ano, prox.mes))
+      .reduce((s, r) => s + r.valor, 0);
+
+    // Despesas fixas do próximo mês
+    const despFixProx = state.despesasFixas
+      .filter((d) => itemAtivoNoMes(d, prox.ano, prox.mes))
+      .reduce((s, d) => s + d.valor, 0);
+
+    // Média das despesas variáveis dos últimos 3 meses encerrados
+    let totalVar3 = 0;
+    let mesesComDados = 0;
+    for (let i = 1; i <= 3; i++) {
+      let hAno = mesVis.ano, hMes = mesVis.mes - i + 1;
+      // mês atual conta como "encerrado parcialmente" — usa o que já foi lançado
+      // meses anteriores ao atual são histórico real
+      while (hMes <= 0) { hMes += 12; hAno--; }
+      const dvMes = state.despesasVariaveis.filter((d) => {
+        const dt = new Date(d.data + "T00:00:00");
+        return dt.getFullYear() === hAno && dt.getMonth() + 1 === hMes;
+      });
+      if (dvMes.length > 0 || i === 1) {
+        totalVar3 += dvMes.reduce((s, d) => s + d.valor, 0);
+        mesesComDados++;
+      }
+    }
+    const despVarEstimada = mesesComDados > 0 ? Math.round(totalVar3 / mesesComDados) : 0;
+
+    const totalDespProx = despFixProx + despVarEstimada;
+    const saldoProx = recFixProx - totalDespProx;
+    const pct = recFixProx > 0 ? (totalDespProx / recFixProx) * 100 : 100;
     const status = pct >= 95 ? "critico" : pct >= 80 ? "warn" : "ok";
-    return { recFixProx, despFixProx, saldoProx, pct: Math.min(Math.round(pct), 100), status };
+
+    return {
+      recFixProx,
+      despFixProx,
+      despVarEstimada,
+      totalDespProx,
+      saldoProx,
+      pct: Math.min(Math.round(pct), 100),
+      status,
+    };
   }, [state, mesVis]);
 
   const historico = useMemo(() => {
@@ -754,7 +796,7 @@ function AbaInicio({ dadosMes, cicloData, saudeMes, ehMesFuturo, ehMesPassado, m
 }
 
 function SaudeCard({ saudeMes, ocultar }) {
-  const { recFixProx, despFixProx, saldoProx, pct, status } = saudeMes;
+  const { recFixProx, despFixProx, despVarEstimada, totalDespProx, saldoProx, pct, status } = saudeMes;
   const label = status === "ok" ? "Folgado" : status === "warn" ? "Apertado" : "Sobrecarregado";
   const emoji = status === "ok" ? "✓" : status === "warn" ? "⚠" : "✕";
   const barColor = status === "ok" ? "var(--green)" : status === "warn" ? "var(--yellow)" : "var(--red)";
@@ -772,6 +814,15 @@ function SaudeCard({ saudeMes, ocultar }) {
       <div className="stat-row">
         <span className="stat-label">Despesas fixas previstas</span>
         <span className="stat-val" style={{ color: "var(--red)" }}>{fmtV(despFixProx, ocultar)}</span>
+      </div>
+      <div className="stat-row">
+        <span className="stat-label">Variáveis estimadas <span style={{ fontSize: 10, color: "var(--text3)" }}>(média 3 meses)</span></span>
+        <span className="stat-val" style={{ color: "var(--red)" }}>{fmtV(despVarEstimada, ocultar)}</span>
+      </div>
+      <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
+      <div className="stat-row">
+        <span className="stat-label">Total de despesas previstas</span>
+        <span className="stat-val" style={{ color: "var(--red)" }}>{fmtV(totalDespProx, ocultar)}</span>
       </div>
       <div className="stat-row">
         <span className="stat-label" style={{ fontWeight: 600, color: "var(--text)" }}>Disponível para investir</span>
