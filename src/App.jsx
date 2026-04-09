@@ -60,6 +60,7 @@ const ESTADO_INICIAL = {
     nomeFamilia: "Minha Família",
     ciclo1ini: 1,  ciclo1fim: 5,
     ciclo2ini: 15, ciclo2fim: 20,
+    orcamentoVariaveis: 0,
   },
   receitasFixas: [],
   despesasFixas: [],
@@ -573,34 +574,15 @@ export default function App() {
   const saudeMes = useMemo(() => {
     const prox = mesPosterior(mesVis.ano, mesVis.mes);
 
-    // Receitas fixas do próximo mês
     const recFixProx = state.receitasFixas
       .filter((r) => itemAtivoNoMes(r, prox.ano, prox.mes))
       .reduce((s, r) => s + r.valor, 0);
 
-    // Despesas fixas do próximo mês
     const despFixProx = state.despesasFixas
       .filter((d) => itemAtivoNoMes(d, prox.ano, prox.mes))
       .reduce((s, d) => s + d.valor, 0);
 
-    // Média das despesas variáveis dos últimos 3 meses encerrados
-    let totalVar3 = 0;
-    let mesesComDados = 0;
-    for (let i = 1; i <= 3; i++) {
-      let hAno = mesVis.ano, hMes = mesVis.mes - i + 1;
-      // mês atual conta como "encerrado parcialmente" — usa o que já foi lançado
-      // meses anteriores ao atual são histórico real
-      while (hMes <= 0) { hMes += 12; hAno--; }
-      const dvMes = state.despesasVariaveis.filter((d) => {
-        const dt = new Date(d.data + "T00:00:00");
-        return dt.getFullYear() === hAno && dt.getMonth() + 1 === hMes;
-      });
-      if (dvMes.length > 0 || i === 1) {
-        totalVar3 += dvMes.reduce((s, d) => s + d.valor, 0);
-        mesesComDados++;
-      }
-    }
-    const despVarEstimada = mesesComDados > 0 ? Math.round(totalVar3 / mesesComDados) : 0;
+    const despVarEstimada = state.config.orcamentoVariaveis || 0;
 
     const totalDespProx = despFixProx + despVarEstimada;
     const saldoProx = recFixProx - totalDespProx;
@@ -816,7 +798,7 @@ function SaudeCard({ saudeMes, ocultar }) {
         <span className="stat-val" style={{ color: "var(--red)" }}>{fmtV(despFixProx, ocultar)}</span>
       </div>
       <div className="stat-row">
-        <span className="stat-label">Variáveis estimadas <span style={{ fontSize: 10, color: "var(--text3)" }}>(média 3 meses)</span></span>
+        <span className="stat-label">Variáveis previstas <span style={{ fontSize: 10, color: "var(--text3)" }}>(orçamento mensal)</span></span>
         <span className="stat-val" style={{ color: "var(--red)" }}>{fmtV(despVarEstimada, ocultar)}</span>
       </div>
       <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
@@ -1121,6 +1103,15 @@ function AbaConfig({ state, update, setModal, excluir, editar, mover }) {
             <input type="number" min="1" max="31" value={state.config.ciclo2fim ?? 20}
               onChange={(e) => update((s) => { s.config.ciclo2fim = parseInt(e.target.value) || 20; })} />
           </div>
+        </div>
+        <div className="field">
+          <label>Orçamento mensal para despesas variáveis (R$)</label>
+          <input
+            type="number"
+            placeholder="Ex: 1500"
+            value={state.config.orcamentoVariaveis || ""}
+            onChange={(e) => update((s) => { s.config.orcamentoVariaveis = parseFloat(e.target.value) || 0; })}
+          />
         </div>
       </div>
 
